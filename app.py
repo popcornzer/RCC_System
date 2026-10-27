@@ -6,11 +6,14 @@ import psycopg2
 import psycopg2.extras
 import streamlit as st
 
+from carry import plan_carry, prev_period
+
 st.set_page_config(page_title="RCC 2026 Tracker", page_icon="⚡", layout="wide")
 
 YEAR = 2026
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-PEOPLE = ["-", "Pop", "Mom", "Tim", "k-bank"]
+PEOPLE = ["", "Pop", "Tim", "Mom", "k-bank", "EXAT"]
+dash = lambda x: x if x else "-"
 
 
 def secret(key):
@@ -20,10 +23,13 @@ def secret(key):
         return os.environ.get(key)
 
 
-def run(query, params=None, fetch=False):
+def run(query, params=None, fetch=False, many=False):
     conn = psycopg2.connect(secret("DATABASE_URL"))
     try:
         with conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            if many:
+                cur.executemany(query, params)
+                return None
             cur.execute(query, params)
             return cur.fetchall() if fetch else None
     finally:
@@ -31,12 +37,33 @@ def run(query, params=None, fetch=False):
 
 
 def plabel(p):
-    """'2026-11' -> 'Nov 2026'"""
     try:
         y, m = p.split("-")
         return f"{MONTHS[int(m) - 1]} {y}"
     except Exception:
         return p
+
+
+def has(x):
+    return x is not None and not pd.isna(x)
+
+
+def iv(x):
+    return int(x) if has(x) else 0
+
+
+def fmt_d(d):
+    return d.strftime("%d/%m") if has(d) else "-"
+
+
+def inst_txt(no, tot):
+    if not has(no):
+        return ""
+    return f"{int(no)}/{int(tot)}" if has(tot) else f"#{int(no)}"
+
+
+def blank(s):
+    return s.fillna("").astype(str).str.strip().isin(["", "-"])
 
 
 # ---------- รหัสผ่าน ----------
@@ -57,7 +84,7 @@ run("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 if msg := st.session_state.pop("msg", None):
     st.success(msg)
 
-# ---------- Sidebar: เลือกงวด (ไม่อิงวันที่) ----------
+# ---------- Sidebar ----------
 st.sidebar.title("⚡ RCC 2026")
 db_periods = {x["period"] for x in run("SELECT DISTINCT period FROM expenses", fetch=True)}
 periods = sorted({f"{YEAR}-{m:02d}" for m in range(1, 13)} | db_periods)
@@ -75,24 +102,46 @@ if new_salary != salary and st.sidebar.button("บันทึกเงินเ
     st.session_state["msg"] = "บันทึกเงินเดือนแล้ว"
     st.rerun()
 
-types = [t["name"] for t in run("SELECT name FROM expense_types ORDER BY id", fetch=True)] or [""]
+st.sidebar.divider()
+prev_p = prev_period(period)
+if st.sidebar.button(f"📥 ยกรายการต่อเนื่องจาก {plabel(prev_p)}",
+                     help="ยกรายการประจำ + ผ่อน/เก็บต่อเนื่อง (งวดที่ +1, ผ่อนครบแล้วไม่ยก, กดซ้ำไม่ซ้ำซ้อน)"):
+    src = run("SELECT * FROM expenses WHERE period=%s AND (recurring OR inst_no IS NOT NULL) ORDER BY id",
+              (prev_p,), fetch=True)
+    have = [(x["item"], x["type"], x["name"]) for x in
+            run("SELECT item,type,name FROM expenses WHERE period=%s", (period,), fetch=True)]
+    new = plan_carry(src, have)
+    if new:
+        run("INSERT INTO expenses (period,date,item,type,name,amount,description,inst_no,inst_total,recurring) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            [(period, n["date"], n["item"], n["type"], n["name"], n["amount"], n["description"],
+              n["inst_no"], n["inst_total"], n["recurring"]) for n in new], many=True)
+    st.session_state["msg"] = f"ยกมา {len(new)} รายการจาก {plabel(prev_p)} (ข้ามรายการที่มีอยู่แล้วและที่ผ่อนครบ)"
+    st.rerun()
+
+types = [""] + [t["name"] for t in run("SELECT name FROM expense_types ORDER BY id", fetch=True)]
 
 # ---------- โหลดข้อมูลของงวดที่เลือก ----------
 rows = run(
-    """SELECT id, period, date, item, type, name, amount::float AS amount, description
-       FROM expenses WHERE period = %s ORDER BY date, id""", (period,), fetch=True)
-df = pd.DataFrame(rows, columns=["id", "period", "date", "item", "type", "name", "amount", "description"])
+    """SELECT id, period, date, item, type, name, amount::float AS amount, description,
+              inst_no, inst_total, recurring
+       FROM expenses WHERE period = %s ORDER BY date NULLS FIRST, id""", (period,), fetch=True)
+df = pd.DataFrame(rows, columns=["id", "period", "date", "item", "type", "name", "amount",
+                                 "description", "inst_no", "inst_total", "recurring"])
 
 tab1, tab2, tab3 = st.tabs(["📋 รายการ", "✏️ เพิ่ม / แก้ไข / ลบ", "📊 ภาพรวมทั้งปี"])
 
-# ---------- Tab 1: รายการ ----------
+# ---------- Tab 1 ----------
 with tab1:
-    total = df["amount"].sum()
+    # บิลแบ่งหลายคน: แถวยอดรวมมีแต่บัตร (ไม่มีชื่อ) แถวแบ่งมีแต่ชื่อ (ไม่มีบัตร) จึงรวมแยกกัน
+    by_card = df[~blank(df["type"])]
+    by_person = df[~blank(df["name"])]
     pop = df.loc[df["name"] == "Pop", "amount"].sum()
-    c1, c2, c3 = st.columns(3)
-    c1.metric(f"รวมค่าใช้จ่ายงวด {plabel(period)}", f"฿{total:,.2f}")
-    c2.metric("ยอดเรียกเก็บ Pop", f"฿{pop:,.2f}")
-    c3.metric("เงินเดือนคงเหลือ", f"฿{salary - pop:,.2f}")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("ยอดรวมทุกบัตร", f"฿{by_card['amount'].sum():,.2f}")
+    c2.metric("ยอดรวมทุกคน", f"฿{by_person['amount'].sum():,.2f}")
+    c3.metric("ยอดเรียกเก็บ Pop", f"฿{pop:,.2f}")
+    c4.metric("เงินเดือนคงเหลือ", f"฿{salary - pop:,.2f}")
 
     q = st.text_input("🔍 ค้นหา", "")
     view = df
@@ -100,21 +149,25 @@ with tab1:
         mask = df[["item", "type", "name", "description"]].fillna("").apply(
             lambda col: col.astype(str).str.contains(q, case=False)).any(axis=1)
         view = df[mask]
+    view = view.copy()
+    view["date"] = pd.to_datetime(view["date"])
+    view["ผ่อน"] = [inst_txt(a, b) for a, b in zip(view["inst_no"], view["inst_total"])]
     st.dataframe(
-        view.drop(columns="period"), hide_index=True, use_container_width=True,
+        view[["id", "date", "item", "type", "name", "amount", "ผ่อน", "recurring", "description"]],
+        hide_index=True, use_container_width=True,
         column_config={
             "id": "ID", "date": st.column_config.DateColumn("วันที่", format="DD/MM/YYYY"),
-            "item": "รายการ", "type": "ประเภท", "name": "ผู้จ่าย",
+            "item": "รายการ", "type": "บัตร/ประเภท", "name": "ผู้จ่าย",
             "amount": st.column_config.NumberColumn("จำนวนเงิน", format="฿%.2f"),
-            "description": "หมายเหตุ"})
+            "recurring": st.column_config.CheckboxColumn("ประจำ"), "description": "หมายเหตุ"})
 
     a, b = st.columns(2)
-    a.subheader("สรุปตามประเภท")
-    a.dataframe(df.groupby("type", dropna=False)["amount"].sum().rename("รวม"), use_container_width=True)
+    a.subheader("สรุปตามบัตร")
+    a.dataframe(by_card.groupby("type")["amount"].sum().rename("รวม"), use_container_width=True)
     b.subheader("ยอดแยกรายบุคคล")
-    b.dataframe(df.groupby("name", dropna=False)["amount"].sum().rename("รวม"), use_container_width=True)
+    b.dataframe(by_person.groupby("name")["amount"].sum().rename("รวม"), use_container_width=True)
 
-# ---------- Tab 2: เพิ่ม / แก้ไข / ลบ ----------
+# ---------- Tab 2 ----------
 with tab2:
     mode = st.radio("เลือกการทำงาน", ["เพิ่มรายการ", "แก้ไข", "ลบ"], horizontal=True)
     rec = None
@@ -122,7 +175,8 @@ with tab2:
         if df.empty:
             st.info("งวดนี้ยังไม่มีรายการ")
         else:
-            labels = {x.id: f"#{x.id}  {x.date:%d/%m}  {x.item}  ฿{x.amount:,.2f}" for x in df.itertuples()}
+            labels = {x.id: f"#{x.id}  {fmt_d(x.date)}  {x.item}  {dash(x.name)}  ฿{x.amount:,.2f}"
+                      for x in df.itertuples()}
             pick = st.selectbox("เลือกรายการ", list(labels), format_func=labels.get)
             rec = df[df["id"] == pick].iloc[0]
 
@@ -135,8 +189,9 @@ with tab2:
 
     elif mode == "เพิ่มรายการ" or rec is not None:
         with st.form("record_form"):
-            c0, c00 = st.columns(2)
-            d = c0.date_input("วันที่จ่ายจริง", rec["date"] if rec is not None else date.today())
+            c0, c00, c01 = st.columns([2, 2, 1])
+            d = c0.date_input("วันที่จ่ายจริง", rec["date"] if rec is not None and has(rec["date"]) else date.today())
+            no_date = c01.checkbox("ไม่ระบุวันที่", value=rec is not None and not has(rec["date"]))
             p_default = rec["period"] if rec is not None and rec["period"] in periods else period
             per = c00.selectbox("งวดตัดยอด", periods, index=periods.index(p_default), format_func=plabel)
             amount = st.number_input("จำนวนเงิน (฿)", min_value=0.0, step=1.0, format="%.2f",
@@ -145,40 +200,50 @@ with tab2:
             c1, c2 = st.columns(2)
             t_idx = types.index(rec["type"]) if rec is not None and rec["type"] in types else 0
             n_idx = PEOPLE.index(rec["name"]) if rec is not None and rec["name"] in PEOPLE else 0
-            typ = c1.selectbox("จ่ายผ่าน", types, index=t_idx)
-            name = c2.selectbox("ผู้รับผิดชอบ", PEOPLE, index=n_idx)
+            typ = c1.selectbox("บัตร/ประเภท (เว้นว่างได้ เช่น แถวแบ่งคน)", types, index=t_idx, format_func=dash)
+            name = c2.selectbox("ผู้รับผิดชอบ (เว้นว่างได้ เช่น แถวยอดรวมบัตร)", PEOPLE, index=n_idx, format_func=dash)
+            i1, i2, i3 = st.columns(3)
+            inst_no = i1.number_input("ผ่อน/เก็บ งวดที่ (0 = ไม่มี)", 0, 999, iv(rec["inst_no"]) if rec is not None else 0)
+            inst_total = i2.number_input("จากทั้งหมด (0 = ไม่กำหนด)", 0, 999, iv(rec["inst_total"]) if rec is not None else 0)
+            recurring = i3.checkbox("รายการประจำทุกงวด", value=bool(rec["recurring"]) if rec is not None else False)
             desc = st.text_area("หมายเหตุ", rec["description"] if rec is not None and rec["description"] else "")
             if st.form_submit_button("บันทึกข้อมูล", type="primary"):
                 if not item.strip() or amount <= 0:
                     st.error("กรุณากรอกรายการและจำนวนเงิน")
+                elif inst_total and inst_no > inst_total:
+                    st.error("งวดที่ต้องไม่มากกว่าจำนวนงวดทั้งหมด")
                 else:
+                    vals = (per, None if no_date else d, item.strip(), typ, name, amount, desc.strip(),
+                            inst_no or None, inst_total or None, recurring)
                     if rec is None:
-                        run("INSERT INTO expenses (period,date,item,type,name,amount,description) "
-                            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                            (per, d, item.strip(), typ, name, amount, desc.strip()))
+                        run("INSERT INTO expenses (period,date,item,type,name,amount,description,"
+                            "inst_no,inst_total,recurring) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", vals)
                     else:
                         run("UPDATE expenses SET period=%s,date=%s,item=%s,type=%s,name=%s,amount=%s,"
-                            "description=%s WHERE id=%s",
-                            (per, d, item.strip(), typ, name, amount, desc.strip(), int(rec["id"])))
+                            "description=%s,inst_no=%s,inst_total=%s,recurring=%s WHERE id=%s",
+                            vals + (int(rec["id"]),))
                     st.session_state["msg"] = "บันทึกสำเร็จ ✓"
                     st.rerun()
 
-# ---------- Tab 3: ภาพรวมทั้งปี (ตามงวด) ----------
+# ---------- Tab 3 ----------
 with tab3:
+    by = st.radio("สรุปตาม", ["ผู้จ่าย", "บัตร"], horizontal=True)
+    col = "name" if by == "ผู้จ่าย" else "type"          # whitelist เท่านั้น
     rows = run(
-        """SELECT period, COALESCE(NULLIF(name,''),'อื่นๆ') AS name, SUM(amount)::float AS total
-           FROM expenses WHERE period LIKE %s GROUP BY 1,2""", (f"{YEAR}-%",), fetch=True)
-    s = pd.DataFrame(rows, columns=["period", "name", "total"])
+        f"""SELECT period, {col} AS grp, SUM(amount)::float AS total
+            FROM expenses WHERE period LIKE %s AND {col} NOT IN ('', '-') GROUP BY 1,2""",
+        (f"{YEAR}-%",), fetch=True)
+    s = pd.DataFrame(rows, columns=["period", "grp", "total"])
     if s.empty:
         st.info("ยังไม่มีข้อมูลของปีนี้")
     else:
-        pivot = s.pivot_table(index="period", columns="name", values="total", aggfunc="sum", fill_value=0)
+        pivot = s.pivot_table(index="period", columns="grp", values="total", aggfunc="sum", fill_value=0)
         pivot = pivot.reindex([f"{YEAR}-{m:02d}" for m in range(1, 13)], fill_value=0)
         pivot.index = MONTHS
         pivot.insert(0, "รวม", pivot.sum(axis=1))
-        st.metric("รวมค่าใช้จ่ายทั้งปี", f"฿{pivot['รวม'].sum():,.2f}")
+        st.metric(f"รวมทั้งปี (ตาม{by})", f"฿{pivot['รวม'].sum():,.2f}")
         st.bar_chart(pivot["รวม"])
-        st.subheader("สรุปรายบุคคลสะสมทั้งปี")
+        st.subheader(f"สะสมทั้งปีแยกตาม{by}")
         st.dataframe(pivot.drop(columns="รวม").sum().rename("รวม"), use_container_width=True)
         st.subheader("รายละเอียดแต่ละงวด")
         st.dataframe(pivot.style.format("{:,.2f}"), use_container_width=True)
