@@ -25,3 +25,19 @@ def plan_carry(src_rows, existing_keys):
                         amount=r["amount"], description=r["description"],
                         inst_no=new_no, inst_total=tot, recurring=r["recurring"]))
     return out
+
+
+def period_for(d, bill_day, fallback):
+    """งวดที่รายการนี้ควรอยู่ตามวันตัดบัตร: ใช้ก่อน/ในวันตัด -> เดือนนี้, หลังวันตัด -> เดือนถัดไป"""
+    if not bill_day:
+        return fallback
+    y, m = d.year, d.month
+    if d.day > bill_day:
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return f"{y}-{m:02d}"
+
+
+def split_amounts(amount, n):
+    """แบ่งยอดเท่า ๆ กัน n คน ให้ผลรวมตรงยอดเดิมพอดี (เศษสตางค์ไปที่คนสุดท้าย)"""
+    base = round(amount / n, 2)
+    return [base] * (n - 1) + [round(amount - base * (n - 1), 2)]
