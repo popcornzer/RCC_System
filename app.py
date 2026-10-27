@@ -30,6 +30,15 @@ def run(query, params=None, fetch=False):
         conn.close()
 
 
+def plabel(p):
+    """'2026-11' -> 'Nov 2026'"""
+    try:
+        y, m = p.split("-")
+        return f"{MONTHS[int(m) - 1]} {y}"
+    except Exception:
+        return p
+
+
 # ---------- รหัสผ่าน ----------
 pw = secret("APP_PASSWORD")
 if pw and not st.session_state.get("ok"):
@@ -48,12 +57,14 @@ run("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 if msg := st.session_state.pop("msg", None):
     st.success(msg)
 
-# ---------- Sidebar ----------
+# ---------- Sidebar: เลือกงวด (ไม่อิงวันที่) ----------
 st.sidebar.title("⚡ RCC 2026")
-default_idx = date.today().month - 1 if date.today().year == YEAR else 0
-month_name = st.sidebar.selectbox("เลือกเดือน", MONTHS, index=default_idx)
-month_no = MONTHS.index(month_name) + 1
-start = f"{YEAR}-{month_no:02d}-01"
+db_periods = {x["period"] for x in run("SELECT DISTINCT period FROM expenses", fetch=True)}
+periods = sorted({f"{YEAR}-{m:02d}" for m in range(1, 13)} | db_periods)
+today_p = date.today().strftime("%Y-%m")
+period = st.sidebar.selectbox(
+    "เลือกงวด", periods, format_func=plabel,
+    index=periods.index(today_p) if today_p in periods else 0)
 
 r = run("SELECT value FROM settings WHERE key='salary'", fetch=True)
 salary = float(r[0]["value"]) if r else 28300.0
@@ -66,13 +77,11 @@ if new_salary != salary and st.sidebar.button("บันทึกเงินเ
 
 types = [t["name"] for t in run("SELECT name FROM expense_types ORDER BY id", fetch=True)] or [""]
 
-# ---------- โหลดข้อมูลเดือนที่เลือก ----------
+# ---------- โหลดข้อมูลของงวดที่เลือก ----------
 rows = run(
-    """SELECT id, date, item, type, name, amount::float AS amount, description
-       FROM expenses
-       WHERE date >= %s::date AND date < (%s::date + interval '1 month')
-       ORDER BY date, id""", (start, start), fetch=True)
-df = pd.DataFrame(rows, columns=["id", "date", "item", "type", "name", "amount", "description"])
+    """SELECT id, period, date, item, type, name, amount::float AS amount, description
+       FROM expenses WHERE period = %s ORDER BY date, id""", (period,), fetch=True)
+df = pd.DataFrame(rows, columns=["id", "period", "date", "item", "type", "name", "amount", "description"])
 
 tab1, tab2, tab3 = st.tabs(["📋 รายการ", "✏️ เพิ่ม / แก้ไข / ลบ", "📊 ภาพรวมทั้งปี"])
 
@@ -81,7 +90,7 @@ with tab1:
     total = df["amount"].sum()
     pop = df.loc[df["name"] == "Pop", "amount"].sum()
     c1, c2, c3 = st.columns(3)
-    c1.metric("รวมค่าใช้จ่ายเดือนนี้", f"฿{total:,.2f}")
+    c1.metric(f"รวมค่าใช้จ่ายงวด {plabel(period)}", f"฿{total:,.2f}")
     c2.metric("ยอดเรียกเก็บ Pop", f"฿{pop:,.2f}")
     c3.metric("เงินเดือนคงเหลือ", f"฿{salary - pop:,.2f}")
 
@@ -92,7 +101,7 @@ with tab1:
             lambda col: col.astype(str).str.contains(q, case=False)).any(axis=1)
         view = df[mask]
     st.dataframe(
-        view, hide_index=True, use_container_width=True,
+        view.drop(columns="period"), hide_index=True, use_container_width=True,
         column_config={
             "id": "ID", "date": st.column_config.DateColumn("วันที่", format="DD/MM/YYYY"),
             "item": "รายการ", "type": "ประเภท", "name": "ผู้จ่าย",
@@ -111,7 +120,7 @@ with tab2:
     rec = None
     if mode != "เพิ่มรายการ":
         if df.empty:
-            st.info("เดือนนี้ยังไม่มีรายการ")
+            st.info("งวดนี้ยังไม่มีรายการ")
         else:
             labels = {x.id: f"#{x.id}  {x.date:%d/%m}  {x.item}  ฿{x.amount:,.2f}" for x in df.itertuples()}
             pick = st.selectbox("เลือกรายการ", list(labels), format_func=labels.get)
@@ -126,7 +135,10 @@ with tab2:
 
     elif mode == "เพิ่มรายการ" or rec is not None:
         with st.form("record_form"):
-            d = st.date_input("วันที่", rec["date"] if rec is not None else date.today())
+            c0, c00 = st.columns(2)
+            d = c0.date_input("วันที่จ่ายจริง", rec["date"] if rec is not None else date.today())
+            p_default = rec["period"] if rec is not None and rec["period"] in periods else period
+            per = c00.selectbox("งวดตัดยอด", periods, index=periods.index(p_default), format_func=plabel)
             amount = st.number_input("จำนวนเงิน (฿)", min_value=0.0, step=1.0, format="%.2f",
                                      value=float(rec["amount"]) if rec is not None else 0.0)
             item = st.text_input("รายการ", rec["item"] if rec is not None else "")
@@ -141,31 +153,32 @@ with tab2:
                     st.error("กรุณากรอกรายการและจำนวนเงิน")
                 else:
                     if rec is None:
-                        run("INSERT INTO expenses (date,item,type,name,amount,description) "
-                            "VALUES (%s,%s,%s,%s,%s,%s)", (d, item.strip(), typ, name, amount, desc.strip()))
+                        run("INSERT INTO expenses (period,date,item,type,name,amount,description) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                            (per, d, item.strip(), typ, name, amount, desc.strip()))
                     else:
-                        run("UPDATE expenses SET date=%s,item=%s,type=%s,name=%s,amount=%s,description=%s "
-                            "WHERE id=%s", (d, item.strip(), typ, name, amount, desc.strip(), int(rec["id"])))
+                        run("UPDATE expenses SET period=%s,date=%s,item=%s,type=%s,name=%s,amount=%s,"
+                            "description=%s WHERE id=%s",
+                            (per, d, item.strip(), typ, name, amount, desc.strip(), int(rec["id"])))
                     st.session_state["msg"] = "บันทึกสำเร็จ ✓"
                     st.rerun()
 
-# ---------- Tab 3: ภาพรวม ----------
+# ---------- Tab 3: ภาพรวมทั้งปี (ตามงวด) ----------
 with tab3:
     rows = run(
-        """SELECT EXTRACT(MONTH FROM date)::int AS m, COALESCE(NULLIF(name,''),'อื่นๆ') AS name,
-                  SUM(amount)::float AS total
-           FROM expenses WHERE EXTRACT(YEAR FROM date)=%s GROUP BY 1,2""", (YEAR,), fetch=True)
-    s = pd.DataFrame(rows, columns=["m", "name", "total"])
+        """SELECT period, COALESCE(NULLIF(name,''),'อื่นๆ') AS name, SUM(amount)::float AS total
+           FROM expenses WHERE period LIKE %s GROUP BY 1,2""", (f"{YEAR}-%",), fetch=True)
+    s = pd.DataFrame(rows, columns=["period", "name", "total"])
     if s.empty:
         st.info("ยังไม่มีข้อมูลของปีนี้")
     else:
-        pivot = s.pivot_table(index="m", columns="name", values="total", aggfunc="sum", fill_value=0)
-        pivot = pivot.reindex(range(1, 13), fill_value=0)
+        pivot = s.pivot_table(index="period", columns="name", values="total", aggfunc="sum", fill_value=0)
+        pivot = pivot.reindex([f"{YEAR}-{m:02d}" for m in range(1, 13)], fill_value=0)
         pivot.index = MONTHS
         pivot.insert(0, "รวม", pivot.sum(axis=1))
         st.metric("รวมค่าใช้จ่ายทั้งปี", f"฿{pivot['รวม'].sum():,.2f}")
         st.bar_chart(pivot["รวม"])
         st.subheader("สรุปรายบุคคลสะสมทั้งปี")
         st.dataframe(pivot.drop(columns="รวม").sum().rename("รวม"), use_container_width=True)
-        st.subheader("รายละเอียดแต่ละเดือน")
+        st.subheader("รายละเอียดแต่ละงวด")
         st.dataframe(pivot.style.format("{:,.2f}"), use_container_width=True)
