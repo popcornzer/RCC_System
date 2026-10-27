@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import date
 
 import pandas as pd
@@ -13,6 +14,7 @@ st.set_page_config(page_title="RCC Tracker", page_icon="⚡", layout="wide")
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 PEOPLE = ["", "Pop", "Tim", "Mom", "k-bank", "EXAT"]
 dash = lambda x: x if x else "-"
+esc = lambda t: re.sub(r"([\\`*_\[\]$~<>#|])", r"\\\1", str(t))
 
 
 def secret(key):
@@ -151,9 +153,76 @@ rows = run(
 df = pd.DataFrame(rows, columns=["id", "period", "date", "item", "type", "name", "amount",
                                  "description", "inst_no", "inst_total", "recurring"])
 
-tab1, tab2, tab3 = st.tabs(["📋 รายการ", "✏️ เพิ่ม / แก้ไข / ลบ", "📊 ภาพรวมทั้งปี"])
 
-# ---------- Tab 1 ----------
+def record_form(rec, k):
+    """ฟอร์มเพิ่ม (rec=None) หรือแก้ไข (rec=แถวเดิม)"""
+    k = f"{k}_{int(rec['id'])}" if rec is not None else k
+    with st.form(k, clear_on_submit=rec is None):
+        c0, c00, c01 = st.columns([2, 2, 1])
+        d = c0.date_input("วันที่จ่ายจริง", rec["date"] if rec is not None and has(rec["date"]) else date.today(),
+                          key=f"{k}_d")
+        no_date = c01.checkbox("ไม่ระบุวันที่", value=rec is not None and not has(rec["date"]), key=f"{k}_nd")
+        p_default = rec["period"] if rec is not None and rec["period"] in all_periods else period
+        per = c00.selectbox("งวดตัดยอด", all_periods, index=all_periods.index(p_default),
+                            format_func=plabel, key=f"{k}_p")
+        amount = st.number_input("จำนวนเงิน (฿)", min_value=0.0, step=1.0, format="%.2f", key=f"{k}_a",
+                                 value=float(rec["amount"]) if rec is not None else 0.0)
+        item = st.text_input("รายการ", rec["item"] if rec is not None else "", key=f"{k}_i")
+        c1, c2 = st.columns(2)
+        t_idx = types.index(rec["type"]) if rec is not None and rec["type"] in types else 0
+        n_idx = PEOPLE.index(rec["name"]) if rec is not None and rec["name"] in PEOPLE else 0
+        typ = c1.selectbox("บัตร/ประเภท (เว้นว่างได้ เช่น แถวแบ่งคน)", types, index=t_idx,
+                           format_func=dash, key=f"{k}_t")
+        name = c2.selectbox("ผู้รับผิดชอบ (เว้นว่างได้ เช่น แถวยอดรวมบัตร)", PEOPLE, index=n_idx,
+                            format_func=dash, key=f"{k}_n")
+        i1, i2, i3 = st.columns(3)
+        inst_no = i1.number_input("ผ่อน/เก็บ งวดที่ (0 = ไม่มี)", 0, 999,
+                                  iv(rec["inst_no"]) if rec is not None else 0, key=f"{k}_in")
+        inst_total = i2.number_input("จากทั้งหมด (0 = ไม่กำหนด)", 0, 999,
+                                     iv(rec["inst_total"]) if rec is not None else 0, key=f"{k}_it")
+        recurring = i3.checkbox("รายการประจำทุกงวด",
+                                value=bool(rec["recurring"]) if rec is not None else False, key=f"{k}_r")
+        desc = st.text_area("หมายเหตุ", rec["description"] if rec is not None and rec["description"] else "",
+                            key=f"{k}_ds")
+        if st.form_submit_button("บันทึกข้อมูล", type="primary"):
+            if not item.strip() or amount <= 0:
+                st.error("กรุณากรอกรายการและจำนวนเงิน")
+            elif inst_total and inst_no > inst_total:
+                st.error("งวดที่ต้องไม่มากกว่าจำนวนงวดทั้งหมด")
+            else:
+                vals = (per, None if no_date else d, item.strip(), typ, name, amount, desc.strip(),
+                        inst_no or None, inst_total or None, recurring)
+                if rec is None:
+                    run("INSERT INTO expenses (period,date,item,type,name,amount,description,"
+                        "inst_no,inst_total,recurring) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", vals)
+                else:
+                    run("UPDATE expenses SET period=%s,date=%s,item=%s,type=%s,name=%s,amount=%s,"
+                        "description=%s,inst_no=%s,inst_total=%s,recurring=%s WHERE id=%s",
+                        vals + (int(rec["id"]),))
+                st.session_state["msg"] = "บันทึกสำเร็จ ✓"
+                st.rerun()
+
+
+@st.dialog("✏️ แก้ไขรายการ")
+def edit_dialog(rec):
+    record_form(rec, "edit")
+
+
+@st.dialog("🗑️ ยืนยันการลบ")
+def delete_dialog(rec):
+    st.warning(f"ลบ: {rec['item']}  ฿{rec['amount']:,.2f}\n\nลบแล้วกู้คืนไม่ได้")
+    b1, b2 = st.columns(2)
+    if b1.button("ลบรายการ", type="primary", width="stretch"):
+        run("DELETE FROM expenses WHERE id=%s", (int(rec["id"]),))
+        st.session_state["msg"] = "ลบรายการสำเร็จ"
+        st.rerun()
+    if b2.button("ยกเลิก", width="stretch"):
+        st.rerun()
+
+
+tab1, tab2, tab3 = st.tabs(["📋 รายการ", "➕ เพิ่มรายการ", "📊 ภาพรวมทั้งปี"])
+
+# ---------- Tab 1: รายการ (มีปุ่มแก้ไข/ลบทุกแถว) ----------
 with tab1:
     # บิลแบ่งหลายคน: แถวยอดรวมมีแต่บัตร (ไม่มีชื่อ) แถวแบ่งมีแต่ชื่อ (ไม่มีบัตร) จึงรวมแยกกัน
     by_card = df[~blank(df["type"])]
@@ -171,81 +240,44 @@ with tab1:
         mask = df[["item", "type", "name", "description"]].fillna("").apply(
             lambda col: col.astype(str).str.contains(q, case=False)).any(axis=1)
         view = df[mask]
-    view = view.copy()
-    view["date"] = pd.to_datetime(view["date"])
-    view["ผ่อน"] = [inst_txt(a, b) for a, b in zip(view["inst_no"], view["inst_total"])]
-    st.dataframe(
-        view[["id", "date", "item", "type", "name", "amount", "ผ่อน", "recurring", "description"]],
-        hide_index=True, use_container_width=True,
-        column_config={
-            "id": "ID", "date": st.column_config.DateColumn("วันที่", format="DD/MM/YYYY"),
-            "item": "รายการ", "type": "บัตร/ประเภท", "name": "ผู้จ่าย",
-            "amount": st.column_config.NumberColumn("จำนวนเงิน", format="฿%.2f"),
-            "recurring": st.column_config.CheckboxColumn("ประจำ"), "description": "หมายเหตุ"})
 
-    a, b = st.columns(2)
-    a.subheader("สรุปตามบัตร")
-    a.dataframe(by_card.groupby("type")["amount"].sum().rename("รวม"), use_container_width=True)
-    b.subheader("ยอดแยกรายบุคคล")
-    b.dataframe(by_person.groupby("name")["amount"].sum().rename("รวม"), use_container_width=True)
+    PAGE = 50
+    pages = max(1, -(-len(view) // PAGE))
+    pg = st.number_input(f"หน้า (ทั้งหมด {pages})", 1, pages, 1) if pages > 1 else 1
+    st.caption(f"แสดง {len(view)} รายการ")
+    W = [1.1, 4.2, 1.6, 0.6, 0.6]
+    h = st.columns(W)
+    for col, t in zip(h, ["วันที่", "รายการ", "จำนวนเงิน", "", ""]):
+        col.caption(t)
+    for row in view.iloc[(pg - 1) * PAGE: pg * PAGE].itertuples():
+        c = st.columns(W, vertical_alignment="center")
+        c[0].caption(row.date.strftime("%d/%m/%Y") if has(row.date) else "-")
+        meta = [dash(row.type), dash(row.name)]
+        if has(row.inst_no):
+            meta.append("ผ่อน " + inst_txt(row.inst_no, row.inst_total))
+        if row.description:
+            meta.append(row.description)
+        c[1].markdown(f"**{esc(row.item)}**{' 🔁' if row.recurring else ''}  \n"
+                      f"<small>{esc(' · '.join(meta))}</small>", unsafe_allow_html=True)
+        c[2].markdown(f"<div style='text-align:right'><b>฿{row.amount:,.2f}</b></div>", unsafe_allow_html=True)
+        if c[3].button("✏️", key=f"e{row.id}", help="แก้ไข"):
+            edit_dialog(df[df["id"] == row.id].iloc[0])
+        if c[4].button("🗑️", key=f"d{row.id}", help="ลบ"):
+            delete_dialog(df[df["id"] == row.id].iloc[0])
 
-# ---------- Tab 2 ----------
+    st.divider()
+    a_, b_ = st.columns(2)
+    a_.subheader("สรุปตามบัตร")
+    a_.dataframe(by_card.groupby("type")["amount"].sum().rename("รวม").to_frame().style.format("{:,.2f}"),
+                 width="stretch")
+    b_.subheader("ยอดแยกรายบุคคล")
+    b_.dataframe(by_person.groupby("name")["amount"].sum().rename("รวม").to_frame().style.format("{:,.2f}"),
+                 width="stretch")
+
+# ---------- Tab 2: เพิ่มรายการ ----------
 with tab2:
-    mode = st.radio("เลือกการทำงาน", ["เพิ่มรายการ", "แก้ไข", "ลบ"], horizontal=True)
-    rec = None
-    if mode != "เพิ่มรายการ":
-        if df.empty:
-            st.info("งวดนี้ยังไม่มีรายการ")
-        else:
-            labels = {x.id: f"#{x.id}  {fmt_d(x.date)}  {x.item}  {dash(x.name)}  ฿{x.amount:,.2f}"
-                      for x in df.itertuples()}
-            pick = st.selectbox("เลือกรายการ", list(labels), format_func=labels.get)
-            rec = df[df["id"] == pick].iloc[0]
-
-    if mode == "ลบ" and rec is not None:
-        st.warning(f"ลบ: {rec['item']} ฿{rec['amount']:,.2f} (กู้คืนไม่ได้)")
-        if st.button("ยืนยันลบ", type="primary"):
-            run("DELETE FROM expenses WHERE id=%s", (int(rec["id"]),))
-            st.session_state["msg"] = "ลบรายการสำเร็จ"
-            st.rerun()
-
-    elif mode == "เพิ่มรายการ" or rec is not None:
-        with st.form("record_form"):
-            c0, c00, c01 = st.columns([2, 2, 1])
-            d = c0.date_input("วันที่จ่ายจริง", rec["date"] if rec is not None and has(rec["date"]) else date.today())
-            no_date = c01.checkbox("ไม่ระบุวันที่", value=rec is not None and not has(rec["date"]))
-            p_default = rec["period"] if rec is not None and rec["period"] in all_periods else period
-            per = c00.selectbox("งวดตัดยอด", all_periods, index=all_periods.index(p_default), format_func=plabel)
-            amount = st.number_input("จำนวนเงิน (฿)", min_value=0.0, step=1.0, format="%.2f",
-                                     value=float(rec["amount"]) if rec is not None else 0.0)
-            item = st.text_input("รายการ", rec["item"] if rec is not None else "")
-            c1, c2 = st.columns(2)
-            t_idx = types.index(rec["type"]) if rec is not None and rec["type"] in types else 0
-            n_idx = PEOPLE.index(rec["name"]) if rec is not None and rec["name"] in PEOPLE else 0
-            typ = c1.selectbox("บัตร/ประเภท (เว้นว่างได้ เช่น แถวแบ่งคน)", types, index=t_idx, format_func=dash)
-            name = c2.selectbox("ผู้รับผิดชอบ (เว้นว่างได้ เช่น แถวยอดรวมบัตร)", PEOPLE, index=n_idx, format_func=dash)
-            i1, i2, i3 = st.columns(3)
-            inst_no = i1.number_input("ผ่อน/เก็บ งวดที่ (0 = ไม่มี)", 0, 999, iv(rec["inst_no"]) if rec is not None else 0)
-            inst_total = i2.number_input("จากทั้งหมด (0 = ไม่กำหนด)", 0, 999, iv(rec["inst_total"]) if rec is not None else 0)
-            recurring = i3.checkbox("รายการประจำทุกงวด", value=bool(rec["recurring"]) if rec is not None else False)
-            desc = st.text_area("หมายเหตุ", rec["description"] if rec is not None and rec["description"] else "")
-            if st.form_submit_button("บันทึกข้อมูล", type="primary"):
-                if not item.strip() or amount <= 0:
-                    st.error("กรุณากรอกรายการและจำนวนเงิน")
-                elif inst_total and inst_no > inst_total:
-                    st.error("งวดที่ต้องไม่มากกว่าจำนวนงวดทั้งหมด")
-                else:
-                    vals = (per, None if no_date else d, item.strip(), typ, name, amount, desc.strip(),
-                            inst_no or None, inst_total or None, recurring)
-                    if rec is None:
-                        run("INSERT INTO expenses (period,date,item,type,name,amount,description,"
-                            "inst_no,inst_total,recurring) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", vals)
-                    else:
-                        run("UPDATE expenses SET period=%s,date=%s,item=%s,type=%s,name=%s,amount=%s,"
-                            "description=%s,inst_no=%s,inst_total=%s,recurring=%s WHERE id=%s",
-                            vals + (int(rec["id"]),))
-                    st.session_state["msg"] = "บันทึกสำเร็จ ✓"
-                    st.rerun()
+    st.subheader(f"เพิ่มรายการในงวด {plabel(period)}")
+    record_form(None, "add")
 
 # ---------- Tab 3 ----------
 with tab3:
@@ -266,6 +298,7 @@ with tab3:
         st.metric(f"รวมทั้งปี {year} (ตาม{by})", f"฿{pivot['รวม'].sum():,.2f}")
         st.bar_chart(pivot["รวม"])
         st.subheader(f"สะสมทั้งปีแยกตาม{by}")
-        st.dataframe(pivot.drop(columns="รวม").sum().rename("รวม"), use_container_width=True)
+        st.dataframe(pivot.drop(columns="รวม").sum().rename("รวม").to_frame().style.format("{:,.2f}"),
+                     width="stretch")
         st.subheader("รายละเอียดแต่ละงวด")
-        st.dataframe(pivot.style.format("{:,.2f}"), use_container_width=True)
+        st.dataframe(pivot.style.format("{:,.2f}"), width="stretch")
