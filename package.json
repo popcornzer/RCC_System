@@ -1,6 +1,0 @@
-{
-  "name": "rcc-tracker",
-  "version": "1.0.0",
-  "type": "module",
-  "dependencies": { "@neondatabase/serverless": "^0.10.4" }
-}
