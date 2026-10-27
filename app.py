@@ -8,9 +8,8 @@ import streamlit as st
 
 from carry import plan_carry, prev_period
 
-st.set_page_config(page_title="RCC 2026 Tracker", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="RCC Tracker", page_icon="⚡", layout="wide")
 
-YEAR = 2026
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 PEOPLE = ["", "Pop", "Tim", "Mom", "k-bank", "EXAT"]
 dash = lambda x: x if x else "-"
@@ -69,7 +68,7 @@ def blank(s):
 # ---------- รหัสผ่าน ----------
 pw = secret("APP_PASSWORD")
 if pw and not st.session_state.get("ok"):
-    st.title("⚡ RCC 2026")
+    st.title("⚡ RCC Tracker")
     x = st.text_input("รหัสผ่าน", type="password")
     if x:
         if x == pw:
@@ -85,22 +84,45 @@ if msg := st.session_state.pop("msg", None):
     st.success(msg)
 
 # ---------- Sidebar ----------
-st.sidebar.title("⚡ RCC 2026")
+st.sidebar.title("⚡ RCC Tracker")
 db_periods = {x["period"] for x in run("SELECT DISTINCT period FROM expenses", fetch=True)}
-periods = sorted({f"{YEAR}-{m:02d}" for m in range(1, 13)} | db_periods)
+years = sorted({int(p[:4]) for p in db_periods if p[:4].isdigit()} | {date.today().year, date.today().year + 1})
+year = st.sidebar.selectbox("เลือกปี", years, index=years.index(date.today().year))
+periods_y = [f"{year}-{m:02d}" for m in range(1, 13)]
+all_periods = sorted({f"{y}-{m:02d}" for y in years for m in range(1, 13)} | db_periods)
 today_p = date.today().strftime("%Y-%m")
 period = st.sidebar.selectbox(
-    "เลือกงวด", periods, format_func=plabel,
-    index=periods.index(today_p) if today_p in periods else 0)
+    "เลือกงวด", periods_y, format_func=plabel, key=f"period_{year}",
+    index=periods_y.index(today_p) if today_p in periods_y else 0)
 
-r = run("SELECT value FROM settings WHERE key='salary'", fetch=True)
-salary = float(r[0]["value"]) if r else 28300.0
-new_salary = st.sidebar.number_input("ฐานเงินเดือน (฿)", min_value=0.0, value=salary, step=100.0)
-if new_salary != salary and st.sidebar.button("บันทึกเงินเดือน"):
-    run("INSERT INTO settings (key,value) VALUES ('salary',%s) "
-        "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (str(new_salary),))
-    st.session_state["msg"] = "บันทึกเงินเดือนแล้ว"
-    st.rerun()
+# ---------- ฐานเงินเดือนแยกรายงวด (ล็อก) ----------
+run("CREATE TABLE IF NOT EXISTS period_salary (period TEXT PRIMARY KEY, salary NUMERIC NOT NULL)")
+exact = run("SELECT salary::float AS s FROM period_salary WHERE period=%s", (period,), fetch=True)
+if exact:
+    salary, saved = exact[0]["s"], True
+else:   # งวดที่ยังไม่เคยตั้งค่า: ใช้ค่าของงวดก่อนหน้าล่าสุดไปพลาง (ยังไม่บันทึก)
+    fb = run("SELECT salary::float AS s FROM period_salary WHERE period < %s ORDER BY period DESC LIMIT 1",
+             (period,), fetch=True)
+    legacy = run("SELECT value FROM settings WHERE key='salary'", fetch=True)
+    salary = fb[0]["s"] if fb else (float(legacy[0]["value"]) if legacy else 0.0)
+    saved = False
+
+st.sidebar.markdown(f"**ฐานเงินเดือน {plabel(period)}**")
+if saved:
+    st.sidebar.caption(f"🔒 ล็อกแล้ว ฿{salary:,.0f} (แก้งวดอื่นไม่กระทบงวดนี้)")
+    editing = st.sidebar.checkbox("🔓 ปลดล็อกเพื่อแก้ไข", key=f"unlock_{period}")
+else:
+    st.sidebar.caption(f"ยังไม่ได้ตั้งค่า ใช้ค่าของงวดก่อนหน้า ฿{salary:,.0f}")
+    editing = True
+if editing:
+    new_salary = st.sidebar.number_input("ฐานเงินเดือน (฿)", min_value=0.0, value=float(salary),
+                                         step=100.0, key=f"sal_{period}")
+    if st.sidebar.button("🔒 บันทึกและล็อก", key=f"save_sal_{period}"):
+        run("INSERT INTO period_salary (period, salary) VALUES (%s,%s) "
+            "ON CONFLICT (period) DO UPDATE SET salary=EXCLUDED.salary", (period, new_salary))
+        st.session_state.pop(f"unlock_{period}", None)
+        st.session_state["msg"] = f"ล็อกฐานเงินเดือน {plabel(period)} = ฿{new_salary:,.0f} แล้ว"
+        st.rerun()
 
 st.sidebar.divider()
 prev_p = prev_period(period)
@@ -192,8 +214,8 @@ with tab2:
             c0, c00, c01 = st.columns([2, 2, 1])
             d = c0.date_input("วันที่จ่ายจริง", rec["date"] if rec is not None and has(rec["date"]) else date.today())
             no_date = c01.checkbox("ไม่ระบุวันที่", value=rec is not None and not has(rec["date"]))
-            p_default = rec["period"] if rec is not None and rec["period"] in periods else period
-            per = c00.selectbox("งวดตัดยอด", periods, index=periods.index(p_default), format_func=plabel)
+            p_default = rec["period"] if rec is not None and rec["period"] in all_periods else period
+            per = c00.selectbox("งวดตัดยอด", all_periods, index=all_periods.index(p_default), format_func=plabel)
             amount = st.number_input("จำนวนเงิน (฿)", min_value=0.0, step=1.0, format="%.2f",
                                      value=float(rec["amount"]) if rec is not None else 0.0)
             item = st.text_input("รายการ", rec["item"] if rec is not None else "")
@@ -232,16 +254,16 @@ with tab3:
     rows = run(
         f"""SELECT period, {col} AS grp, SUM(amount)::float AS total
             FROM expenses WHERE period LIKE %s AND {col} NOT IN ('', '-') GROUP BY 1,2""",
-        (f"{YEAR}-%",), fetch=True)
+        (f"{year}-%",), fetch=True)
     s = pd.DataFrame(rows, columns=["period", "grp", "total"])
     if s.empty:
         st.info("ยังไม่มีข้อมูลของปีนี้")
     else:
         pivot = s.pivot_table(index="period", columns="grp", values="total", aggfunc="sum", fill_value=0)
-        pivot = pivot.reindex([f"{YEAR}-{m:02d}" for m in range(1, 13)], fill_value=0)
+        pivot = pivot.reindex(periods_y, fill_value=0)
         pivot.index = MONTHS
         pivot.insert(0, "รวม", pivot.sum(axis=1))
-        st.metric(f"รวมทั้งปี (ตาม{by})", f"฿{pivot['รวม'].sum():,.2f}")
+        st.metric(f"รวมทั้งปี {year} (ตาม{by})", f"฿{pivot['รวม'].sum():,.2f}")
         st.bar_chart(pivot["รวม"])
         st.subheader(f"สะสมทั้งปีแยกตาม{by}")
         st.dataframe(pivot.drop(columns="รวม").sum().rename("รวม"), use_container_width=True)
