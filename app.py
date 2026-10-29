@@ -9,6 +9,7 @@ import psycopg2.extras
 import streamlit as st
 
 from carry import period_for, plan_carry, prev_period, split_amounts
+from export import build_pdf, build_xlsx
 
 st.set_page_config(page_title="RCC Tracker", page_icon="⚡", layout="centered",
                    initial_sidebar_state="collapsed")
@@ -25,7 +26,10 @@ CSS = """
 .stApp, .stApp p, .stApp label, .stApp button, .stApp input, .stApp textarea,
 .stApp h1, .stApp h2, .stApp h3 {font-family:'Kanit',sans-serif;}
 #MainMenu, footer {visibility:hidden;}
-.block-container {padding:.8rem .8rem 7rem !important; max-width:720px;}
+header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"],
+[data-testid="stStatusWidget"] {display:none !important;}
+.block-container {padding:0 .8rem 7rem !important; max-width:720px;}
+div[data-baseweb="popover"] {z-index:1000002 !important;}
 
 /* แถวที่ต้องอยู่บรรทัดเดียวกันแม้บนมือถือ */
 .st-key-topbar [data-testid="stHorizontalBlock"],
@@ -37,6 +41,12 @@ div[class*="st-key-row_"] [data-testid="stColumn"] {min-width:0 !important;}
 .st-key-topbar [data-testid="stColumn"]:last-child {flex:1 1 0 !important; width:auto !important;}
 div[class*="st-key-row_"] [data-testid="stColumn"]:first-child {flex:1 1 auto !important; width:auto !important;}
 div[class*="st-key-row_"] [data-testid="stColumn"]:not(:first-child) {flex:0 0 40px !important; width:40px !important;}
+
+/* แถบเลือกปี/งวด ติดบนสุดเสมอ */
+.st-key-topbar, [data-testid="stLayoutWrapper"]:has(> .st-key-topbar) {
+  position:sticky; top:0; z-index:90; background:#f0f9ff; padding:.55rem .8rem .4rem; margin:0 -.8rem;}
+.st-key-topbar [data-baseweb="select"] > div {border-radius:14px; border:none; background:#fff;
+  min-height:46px; box-shadow:0 1px 4px rgba(15,23,42,.10);}
 
 /* การ์ดรายการ */
 div[class*="st-key-row_"] {background:#fff; border-radius:18px; padding:10px 12px; margin-bottom:8px;
@@ -76,8 +86,8 @@ div[class*="st-key-row_"] button {min-height:36px; width:36px; padding:0; border
 .mini b {font-size:.95rem;}
 
 /* ปุ่มเพิ่มรายการลอยมุมขวาล่าง */
-.st-key-fab {position:fixed !important; right:16px; bottom:calc(16px + env(safe-area-inset-bottom));
-  z-index:1000; width:auto !important;}
+.st-key-fab {position:fixed !important; left:50%; transform:translateX(-50%);
+  bottom:calc(18px + env(safe-area-inset-bottom)); z-index:100; width:auto !important;}
 .st-key-fab button {background:linear-gradient(135deg,#06b6d4,#2563eb); border:none; border-radius:999px;
   padding:.75rem 1.3rem; box-shadow:0 10px 24px rgba(37,99,235,.45);}
 .st-key-fab button p {color:#fff !important; font-weight:600; font-size:1.05rem; margin:0;}
@@ -350,7 +360,7 @@ with st.container(key="fab"):
     if st.button("＋ เพิ่มรายการ", key="fab_btn"):
         add_dialog()
 
-tab1, tab2, tab3 = st.tabs(["📋 รายการ", "📊 ภาพรวมทั้งปี", "⚙️ ตั้งค่า"])
+tab1, tab2, tab_export, tab3 = st.tabs(["📋 รายการ", "📊 ภาพรวม", "📤 ส่งออก", "⚙️ ตั้งค่า"])
 
 # ---------- Tab 1: รายการ ----------
 with tab1:
@@ -437,6 +447,36 @@ with tab2:
                      width="stretch")
         st.subheader("รายละเอียดแต่ละงวด")
         st.dataframe(pivot.style.format("{:,.2f}"), width="stretch")
+
+# ---------- Tab: ส่งออก Excel / PDF ----------
+with tab_export:
+    st.subheader("ส่งออกข้อมูล")
+    scope_labels = {"period": f"งวดที่เลือก ({plabel(period)})", "year": f"ทั้งปี {year}", "all": "ทุกปี (ข้อมูลทั้งหมด)"}
+    scope = st.radio("ช่วงข้อมูล", list(scope_labels), format_func=scope_labels.get, key="exp_scope")
+
+    def export_rows():
+        where, prm = {"period": ("WHERE period = %s", (period,)), "year": ("WHERE period LIKE %s", (f"{year}-%",)),
+                      "all": ("", None)}[scope]
+        return run("SELECT period, date, item, type, name, amount::float AS amount, description, inst_no, "
+                   "inst_total, recurring FROM expenses " + where + " ORDER BY period, date NULLS FIRST, id",
+                   prm, fetch=True)
+
+    fname = {"period": period, "year": str(year), "all": "all"}[scope]
+    title = "รายงานค่าใช้จ่าย RCC — " + {"period": f"งวด {plabel(period)}", "year": f"ปี {year}",
+                                          "all": "ข้อมูลทั้งหมด"}[scope]
+
+    def make_pdf():
+        info = dict(remain=remain, salary=salary, owner="Pop", pop=pop) if scope == "period" else None
+        return build_pdf(export_rows(), title, salary_info=info)
+
+    x1, x2 = st.columns(2)
+    x1.download_button("📊 Excel (.xlsx)", data=lambda: build_xlsx(export_rows(), title),
+                       file_name=f"RCC_{fname}.xlsx", on_click="ignore", width="stretch",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    x2.download_button("📄 PDF", data=make_pdf, file_name=f"RCC_{fname}.pdf", mime="application/pdf",
+                       on_click="ignore", width="stretch")
+    st.caption("Excel มี 3 ชีต: รายการ (กรองได้ ใช้ทำ Pivot ต่อ), สรุปตามผู้จ่าย, สรุปตามบัตร · "
+               "PDF เหมาะสำหรับดู/ส่งต่อ มีสรุปและรายการแยกตามงวด")
 
 # ---------- Tab 3: ตั้งค่า ----------
 with tab3:
