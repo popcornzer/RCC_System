@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import date
 from html import escape as h
 
@@ -178,18 +179,22 @@ if msg := st.session_state.pop("msg", None):
     st.toast(msg, icon="✅")
 
 # ---------- เลือกปี / งวด ----------
-db_periods = {x["period"] for x in run("SELECT DISTINCT period FROM expenses", fetch=True)}
-years = sorted({int(p[:4]) for p in db_periods if p[:4].isdigit()} | {date.today().year, date.today().year + 1})
-all_periods = sorted({f"{y}-{m:02d}" for y in years for m in range(1, 13)} | db_periods)
 today_p = date.today().strftime("%Y-%m")
+_cp = run("SELECT value FROM settings WHERE key='current_period'", fetch=True)
+default_p = _cp[0]["value"] if _cp and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", _cp[0]["value"]) else today_p
+db_periods = {x["period"] for x in run("SELECT DISTINCT period FROM expenses", fetch=True)}
+years = sorted({int(p[:4]) for p in db_periods if p[:4].isdigit()}
+               | {date.today().year, date.today().year + 1, int(default_p[:4])})
+all_periods = sorted({f"{y}-{m:02d}" for y in years for m in range(1, 13)} | db_periods)
+nav = st.session_state.get("nav_ver", 0)      # เปลี่ยนค่านี้เพื่อให้ช่องเลือกกลับไปที่งวดปัจจุบันใหม่
 with st.container(key="topbar"):
     cy, cp = st.columns([1, 2])
-    year = cy.selectbox("ปี", years, index=years.index(date.today().year), key="year",
+    year = cy.selectbox("ปี", years, index=years.index(int(default_p[:4])), key=f"year_{nav}",
                         label_visibility="collapsed")
     periods_y = [f"{year}-{m:02d}" for m in range(1, 13)]
-    period = cp.selectbox("งวด", periods_y, key=f"period_{year}", label_visibility="collapsed",
+    period = cp.selectbox("งวด", periods_y, key=f"period_{year}_{nav}", label_visibility="collapsed",
                           format_func=lambda p: f"งวด {MONTHS[int(p[5:]) - 1]}",
-                          index=periods_y.index(today_p) if today_p in periods_y else 0)
+                          index=periods_y.index(default_p) if default_p in periods_y else 0)
 
 # ---------- ฐานเงินเดือนแยกรายงวด ----------
 exact = run("SELECT salary::float AS s FROM period_salary WHERE period=%s", (period,), fetch=True)
@@ -346,7 +351,7 @@ remain = salary - pop
 pill = f"🔒 ฐานเงินเดือน ฿{salary:,.0f}" if saved else f"ฐานเงินเดือน ฿{salary:,.0f}"
 st.markdown(f"""
 <div class="hero">
-  <div class="hero-top"><b>{plabel(period)}</b><span class="hero-pill">{pill}</span></div>
+  <div class="hero-top"><b>{plabel(period)}{" · 📌 งวดปัจจุบัน" if period == default_p else ""}</b><span class="hero-pill">{pill}</span></div>
   <div class="hero-label">เงินเดือนคงเหลือ (หักยอด Pop)</div>
   <div class="hero-amt" style="{'color:#fecaca' if remain < 0 else ''}">{money(remain)}</div>
   <div class="hero-grid">
@@ -480,6 +485,18 @@ with tab_export:
 
 # ---------- Tab 3: ตั้งค่า ----------
 with tab3:
+    st.subheader("📌 งวดปัจจุบัน")
+    st.caption("แอป (และบอท Telegram) จะเปิดมาที่งวดนี้ทุกครั้ง ไม่ได้ดูจากเดือนในปฏิทิน เปลี่ยนเมื่อขึ้นงวดใหม่")
+    cur_sel = st.selectbox("งวดปัจจุบัน", all_periods, index=all_periods.index(default_p),
+                           format_func=plabel, key="cur_period_sel")
+    if st.button("📌 บันทึกเป็นงวดปัจจุบัน", key="save_cur_period", disabled=cur_sel == default_p):
+        run("INSERT INTO settings (key,value) VALUES ('current_period',%s) "
+            "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (cur_sel,))
+        st.session_state["nav_ver"] = nav + 1
+        st.session_state["msg"] = f"ตั้งงวดปัจจุบันเป็น {plabel(cur_sel)} แล้ว"
+        st.rerun()
+
+    st.divider()
     st.subheader(f"ฐานเงินเดือน {plabel(period)}")
     if saved:
         st.caption(f"🔒 ล็อกแล้ว ฿{salary:,.0f} (แก้งวดอื่นไม่กระทบงวดนี้)")
