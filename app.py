@@ -92,6 +92,26 @@ div[class*="st-key-row_"] button {min-height:36px; width:36px; padding:0; border
 .st-key-fab button {background:linear-gradient(135deg,#06b6d4,#2563eb); border:none; border-radius:999px;
   padding:.75rem 1.3rem; box-shadow:0 10px 24px rgba(37,99,235,.45);}
 .st-key-fab button p {color:#fff !important; font-weight:600; font-size:1.05rem; margin:0;}
+
+/* มินิการ์ดยอดตามบัตร/บุคคล */
+.minis {display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:4px;}
+
+/* ===== หน้าจอคอม (กว้าง ≥ 1000px): สองคอลัมน์ ===== */
+@media (min-width:1000px) {
+  .block-container {max-width:1180px !important;}
+  .st-key-topbar [data-testid="stHorizontalBlock"] {max-width:440px;}
+  .st-key-side {position:sticky; top:84px;}
+  .st-key-side .hero {margin-top:0;}
+  .st-key-list {display:grid !important; grid-template-columns:1fr 1fr; gap:10px !important;}
+  .st-key-list > * {min-width:0;}
+  .st-key-list div[class*="st-key-row_"] {margin-bottom:0;}
+  .st-key-fab {left:auto !important; right:40px; transform:none !important;}
+}
+/* จอกลาง (641–999px): ซ้อนเป็นคอลัมน์เดียว */
+@media (max-width:999px) {
+  .st-key-main_cols [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important;}
+  .st-key-main_cols [data-testid="stColumn"] {flex:1 1 100% !important; width:100% !important; min-width:100% !important;}
+}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -373,7 +393,8 @@ by_person = df[~blank(df["name"])]
 pop = df.loc[df["name"] == "Pop", "amount"].sum()
 remain = salary - pop
 pill = f"🔒 ฐานเงินเดือน ฿{salary:,.0f}" if saved else f"ฐานเงินเดือน ฿{salary:,.0f}"
-st.markdown(f"""
+def render_hero():
+    st.markdown(f"""
 <div class="hero">
   <div class="hero-top"><b>{plabel(period)}{" · 📌 งวดปัจจุบัน" if period == default_p else ""}</b><span class="hero-pill">{pill}</span></div>
   <div class="hero-label">เงินเดือนคงเหลือ (หักยอด Pop)</div>
@@ -385,6 +406,7 @@ st.markdown(f"""
   </div>
 </div>""", unsafe_allow_html=True)
 
+
 with st.container(key="fab"):
     if st.button("＋ เพิ่มรายการ", key="fab_btn"):
         add_dialog()
@@ -393,65 +415,71 @@ tab1, tab2, tab_export, tab3 = st.tabs(["📋 รายการ", "📊 ภา�
 
 # ---------- Tab 1: รายการ ----------
 with tab1:
-    if df.empty:
-        st.info("งวดนี้ยังไม่มีรายการ กด ＋ เพิ่มรายการ หรือยกรายการผ่อน/รายการประจำจากงวดก่อน")
-        if st.button(f"📥 ยกรายการต่อเนื่องจาก {plabel(prev_period(period))}", key="carry_empty", width="stretch"):
-            do_carry()
-    else:
-        if not by_card.empty:
-            st.markdown('<div class="sec">ยอดตามบัตร</div><div class="hscroll">' + "".join(
-                f'<div class="mini"><small>{h(c)}{" · ตัด " + str(bill_days[c]) if c in bill_days else ""}</small>'
-                f'<b>{money(v)}</b></div>'
-                for c, v in by_card.groupby("type")["amount"].sum().sort_values(ascending=False).items())
-                + "</div>", unsafe_allow_html=True)
-        if not by_person.empty:
-            st.markdown('<div class="sec">ยอดรายบุคคล</div><div class="hscroll">' + "".join(
-                f'<div class="mini"><small>{h(n)}</small><b>{money(v)}</b></div>'
-                for n, v in by_person.groupby("name")["amount"].sum().sort_values(ascending=False).items())
-                + "</div>", unsafe_allow_html=True)
+    with st.container(key="main_cols"):
+        left, right = st.columns([1, 2.1], gap="medium")
 
-        with st.expander("🔎 ค้นหา / กรอง"):
-            q = st.text_input("ค้นหา", placeholder="ค้นหารายการ…", label_visibility="collapsed")
-            f1, f2 = st.columns(2)
-            fc = f1.selectbox("บัตร", ["ทั้งหมด"] + cards)
-            fp = f2.selectbox("ผู้จ่าย", ["ทั้งหมด"] + NAMES)
-        view = df
-        if q:
-            mask = df[["item", "type", "name", "description"]].fillna("").apply(
-                lambda col: col.astype(str).str.contains(q, case=False)).any(axis=1)
-            view = view[mask]
-        if fc != "ทั้งหมด":
-            view = view[view["type"] == fc]
-        if fp != "ทั้งหมด":
-            view = view[view["name"] == fp]
+    with left:
+        with st.container(key="side"):
+            render_hero()
+            if not df.empty:
+                if not by_card.empty:
+                    st.markdown('<div class="sec">ยอดตามบัตร</div><div class="minis">' + "".join(
+                        f'<div class="mini"><small>{h(c)}{" · ตัด " + str(bill_days[c]) if c in bill_days else ""}</small>'
+                        f'<b>{money(v)}</b></div>'
+                        for c, v in by_card.groupby("type")["amount"].sum().sort_values(ascending=False).items())
+                        + "</div>", unsafe_allow_html=True)
+                if not by_person.empty:
+                    st.markdown('<div class="sec">ยอดรายบุคคล</div><div class="minis">' + "".join(
+                        f'<div class="mini"><small>{h(n)}</small><b>{money(v)}</b></div>'
+                        for n, v in by_person.groupby("name")["amount"].sum().sort_values(ascending=False).items())
+                        + "</div>", unsafe_allow_html=True)
 
-        PAGE = 40
-        pages = max(1, -(-len(view) // PAGE))
-        pg = st.number_input(f"หน้า (ทั้งหมด {pages})", 1, pages, 1) if pages > 1 else 1
-        st.markdown(f'<div class="sec">{len(view)} รายการ · รวม {money(view["amount"].sum())}</div>',
-                    unsafe_allow_html=True)
+    with right:
+        if df.empty:
+            st.info("งวดนี้ยังไม่มีรายการ กด ＋ เพิ่มรายการ หรือยกรายการผ่อน/รายการประจำจากงวดก่อน")
+            if st.button(f"📥 ยกรายการต่อเนื่องจาก {plabel(prev_period(period))}", key="carry_empty", width="stretch"):
+                do_carry()
+        else:
+            with st.expander("🔎 ค้นหา / กรอง"):
+                q = st.text_input("ค้นหา", placeholder="ค้นหารายการ…", label_visibility="collapsed")
+                f1, f2 = st.columns(2)
+                fc = f1.selectbox("บัตร", ["ทั้งหมด"] + cards)
+                fp = f2.selectbox("ผู้จ่าย", ["ทั้งหมด"] + NAMES)
+            view = df
+            if q:
+                mask = df[["item", "type", "name", "description"]].fillna("").apply(
+                    lambda col: col.astype(str).str.contains(q, case=False)).any(axis=1)
+                view = view[mask]
+            if fc != "ทั้งหมด":
+                view = view[view["type"] == fc]
+            if fp != "ทั้งหมด":
+                view = view[view["name"] == fp]
 
-        for r in view.iloc[(pg - 1) * PAGE: pg * PAGE].itertuples():
-            chips = []
-            if r.type:
-                chips.append(f'<span class="chip card">{h(r.type)}</span>')
-            if r.name:
-                chips.append(f'<span class="chip p-{PCLS.get(r.name, "oth")}">{h(r.name)}</span>')
-            if has(r.inst_no):
-                chips.append(f'<span class="chip inst">ผ่อน {inst_txt(r.inst_no, r.inst_total)}</span>')
-            if has(r.date):
-                chips.append(f'<span class="chip">{r.date.day} {TH_M[r.date.month - 1]}</span>')
-            desc = f'<div class="tx-desc">{h(r.description)}</div>' if r.description else ""
-            with st.container(key=f"row_{r.id}"):
-                c = st.columns([1, 0.1, 0.1], vertical_alignment="center")
-                c[0].markdown(
-                    f'<div class="tx"><div><div class="tx-title">{h(r.item)}{" 🔁" if r.recurring else ""}</div>'
-                    f'<div class="tx-meta">{"".join(chips)}</div>{desc}</div>'
-                    f'<div class="tx-amt">{money(r.amount)}</div></div>', unsafe_allow_html=True)
-                if c[1].button("✏️", key=f"e{r.id}", help="แก้ไข"):
-                    edit_dialog(df[df["id"] == r.id].iloc[0])
-                if c[2].button("🗑️", key=f"d{r.id}", help="ลบ"):
-                    delete_dialog(df[df["id"] == r.id].iloc[0])
+            st.markdown(f'<div class="sec">{len(view)} รายการ · รวม {money(view["amount"].sum())}</div>',
+                        unsafe_allow_html=True)
+
+            with st.container(key="list"):
+                for r in view.itertuples():
+                    chips = []
+                    if r.type:
+                        chips.append(f'<span class="chip card">{h(r.type)}</span>')
+                    if r.name:
+                        chips.append(f'<span class="chip p-{PCLS.get(r.name, "oth")}">{h(r.name)}</span>')
+                    if has(r.inst_no):
+                        chips.append(f'<span class="chip inst">ผ่อน {inst_txt(r.inst_no, r.inst_total)}</span>')
+                    if has(r.date):
+                        chips.append(f'<span class="chip">{r.date.day} {TH_M[r.date.month - 1]}</span>')
+                    desc = f'<div class="tx-desc">{h(r.description)}</div>' if r.description else ""
+                    with st.container(key=f"row_{r.id}"):
+                        c = st.columns([1, 0.1, 0.1], vertical_alignment="center")
+                        c[0].markdown(
+                            f'<div class="tx"><div><div class="tx-title">{h(r.item)}{" 🔁" if r.recurring else ""}</div>'
+                            f'<div class="tx-meta">{"".join(chips)}</div>{desc}</div>'
+                            f'<div class="tx-amt">{money(r.amount)}</div></div>', unsafe_allow_html=True)
+                        if c[1].button("✏️", key=f"e{r.id}", help="แก้ไข"):
+                            edit_dialog(df[df["id"] == r.id].iloc[0])
+                        if c[2].button("🗑️", key=f"d{r.id}", help="ลบ"):
+                            delete_dialog(df[df["id"] == r.id].iloc[0])
 
 # ---------- Tab 2: ภาพรวมทั้งปี ----------
 with tab2:
