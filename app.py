@@ -104,17 +104,41 @@ def secret(key):
         return os.environ.get(key)
 
 
+@st.cache_resource(ttl=1800)
+def get_conn():
+    """เชื่อมต่อ DB ครั้งเดียวแล้วใช้ซ้ำ (เดิมเปิดการเชื่อมต่อใหม่ทุก query ทำให้ช้า)"""
+    conn = psycopg2.connect(secret("DATABASE_URL"), keepalives=1, keepalives_idle=30,
+                            keepalives_interval=10, keepalives_count=3)
+    conn.autocommit = True
+    return conn
+
+
+def _exec(query, params, fetch, many):
+    for attempt in (1, 2):
+        conn = get_conn()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if many:
+                    cur.executemany(query, params)
+                    return None
+                cur.execute(query, params)
+                return cur.fetchall() if fetch else None
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            get_conn.clear()          # Neon ตัดการเชื่อมต่อตอน idle → เชื่อมต่อใหม่แล้วลองอีกครั้ง
+            if attempt == 2:
+                raise
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _read(query, params):
+    return _exec(query, params, True, False)
+
+
 def run(query, params=None, fetch=False, many=False):
-    conn = psycopg2.connect(secret("DATABASE_URL"))
-    try:
-        with conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            if many:
-                cur.executemany(query, params)
-                return None
-            cur.execute(query, params)
-            return cur.fetchall() if fetch else None
-    finally:
-        conn.close()
+    if fetch:
+        return _read(query, tuple(params) if params else None)
+    _exec(query, params, False, many)
+    _read.clear()                      # มีการเขียนข้อมูล → ล้างแคชการอ่าน
 
 
 def plabel(p):
