@@ -23,14 +23,19 @@ PCLS = {"Pop": "pop", "Tim": "tim", "Mom": "mom", "k-bank": "kb", "EXAT": "ex"}
 
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap');
 .stApp, .stApp p, .stApp label, .stApp button, .stApp input, .stApp textarea,
-.stApp h1, .stApp h2, .stApp h3 {font-family:'Kanit',sans-serif;}
+.stApp h1, .stApp h2, .stApp h3 {font-family:'Inter','Noto Sans Thai',sans-serif;}
+.stApp {background:#f5f7fb !important;}
 #MainMenu, footer {visibility:hidden;}
 header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"],
 [data-testid="stStatusWidget"] {display:none !important;}
 .block-container {padding:0 .8rem 7rem !important; max-width:720px;}
 div[data-baseweb="popover"] {z-index:1000002 !important;}
+
+/* ช่องกรอก/เลือก สไตล์เรียบ */
+[data-baseweb="select"] > div, [data-baseweb="input"], .stTextInput input, .stNumberInput input {
+  border-radius:12px !important; border-color:#e3e8f0 !important; background:#fff !important; box-shadow:none !important;}
 
 /* แถวที่ต้องอยู่บรรทัดเดียวกันแม้บนมือถือ */
 .st-key-topbar [data-testid="stHorizontalBlock"],
@@ -45,53 +50,60 @@ div[class*="st-key-row_"] [data-testid="stColumn"]:not(:first-child) {flex:0 0 4
 
 /* แถบเลือกปี/งวด ติดบนสุดเสมอ */
 .st-key-topbar, [data-testid="stLayoutWrapper"]:has(> .st-key-topbar) {
-  position:sticky; top:0; z-index:90; background:#f0f9ff; padding:.55rem .8rem .4rem; margin:0 -.8rem;}
-.st-key-topbar [data-baseweb="select"] > div {border-radius:14px; border:none; background:#fff;
-  min-height:46px; box-shadow:0 1px 4px rgba(15,23,42,.10);}
+  position:sticky; top:0; z-index:90; background:#f5f7fb; padding:.55rem .8rem .4rem; margin:0 -.8rem;}
+.st-key-topbar [data-baseweb="select"] > div {min-height:44px; border:1px solid #e3e8f0 !important;}
 
-/* การ์ดรายการ */
-div[class*="st-key-row_"] {background:#fff; border-radius:18px; padding:10px 12px; margin-bottom:8px;
-  box-shadow:0 1px 4px rgba(15,23,42,.08);}
-div[class*="st-key-row_"] button {min-height:36px; width:36px; padding:0; border-radius:12px; border:none; background:#f1f5f9;}
-.tx {display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
-.tx-title {font-weight:500; font-size:.98rem; color:#0f172a; word-break:break-word;}
-.tx-amt {font-weight:600; font-size:1rem; color:#1d4ed8; white-space:nowrap;}
-.tx-meta {display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;}
+/* การ์ดรายการ (มือถือ) */
+div[class*="st-key-row_"] {background:#fff; border:1px solid #e8ecf4; border-radius:16px; padding:10px 12px; margin-bottom:8px;}
+div[class*="st-key-row_"] button {min-height:34px; width:34px; padding:0; border-radius:10px; border:1px solid #e3e8f0; background:#fff;}
+div[class*="st-key-row_"] [data-testid="stMarkdownContainer"] {margin-bottom:0 !important;}
+.tx {display:grid; grid-template-columns:1fr auto; grid-template-areas:"main amt" "meta meta"; gap:2px 8px; align-items:start;}
+.tx-main {grid-area:main; min-width:0;} .tx-amt {grid-area:amt;} .tx-meta {grid-area:meta; display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;}
+.tx-date {display:none; grid-area:date;}
+.tx-title {font-weight:500; font-size:.95rem; color:#0f172a; word-break:break-word;}
+.tx-amt {font-weight:600; font-size:.98rem; color:#1d4ed8; white-space:nowrap; text-align:right;}
 .tx-desc {color:#94a3b8; font-size:.72rem; margin-top:3px;}
+.th {display:none;}
 .chip {border-radius:999px; padding:1px 8px; font-size:.68rem; background:#f1f5f9; color:#475569;}
-.chip.card {background:#e0e7ff; color:#3730a3;}
-.chip.inst {background:#fef3c7; color:#92400e;}
+.chip.card {background:#eef2ff; color:#4338ca;}
+.chip.inst {background:#fff4e0; color:#b45309;}
 .chip.p-pop {background:#e0f2fe; color:#0369a1;}
 .chip.p-tim {background:#ede9fe; color:#6d28d9;}
 .chip.p-mom {background:#d1fae5; color:#047857;}
 .chip.p-kb {background:#ffedd5; color:#c2410c;}
 .chip.p-ex {background:#e2e8f0; color:#334155;}
+.txh {display:flex; justify-content:space-between; align-items:baseline; margin:.2rem 0 .5rem;}
+.txh b {font-size:1.02rem;} .txh small {color:#94a3b8; font-size:.78rem;}
+
+/* ช่องค้นหา + ตัวกรอง */
+.st-key-filters {display:grid !important; grid-template-columns:1fr 1fr; gap:.5rem !important; margin-bottom:.5rem;}
+.st-key-filters > *:first-child {grid-column:1/-1;}
 
 /* การ์ดสรุปด้านบน */
-.hero {background:linear-gradient(135deg,#0ea5e9,#2563eb); color:#fff; border-radius:24px; padding:18px 20px;
-  box-shadow:0 10px 25px rgba(37,99,235,.25); margin:.5rem 0 .8rem;}
+.hero {background:linear-gradient(135deg,#2f6bed,#2563eb); color:#fff; border-radius:22px; padding:20px 22px;
+  box-shadow:0 12px 28px rgba(37,99,235,.22); margin:.5rem 0 .8rem; position:relative; overflow:hidden;}
+.hero::after {content:""; position:absolute; right:-70px; bottom:-90px; width:260px; height:260px; border-radius:50%;
+  background:rgba(255,255,255,.07); pointer-events:none;}
 .hero-top {display:flex; justify-content:space-between; align-items:center; font-size:.85rem;}
-.hero-pill {background:rgba(255,255,255,.2); border-radius:999px; padding:2px 10px; font-size:.75rem;}
-.hero-label {font-size:.8rem; opacity:.85; margin-top:10px;}
-.hero-amt {font-size:2.2rem; font-weight:600; line-height:1.1;}
-.hero-grid {display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:14px;}
-.hero-grid div {background:rgba(255,255,255,.16); border-radius:14px; padding:8px 10px;}
+.hero-pill {background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.3); border-radius:999px; padding:2px 10px; font-size:.75rem;}
+.hero-label {font-size:.8rem; opacity:.88; margin-top:10px;}
+.hero-amt {font-size:2.1rem; font-weight:700; line-height:1.15;}
+.hero-grid {display:grid; grid-template-columns:repeat(3,1fr); gap:0; margin-top:14px;}
+.hero-grid div {padding:0 10px; border-left:1px solid rgba(255,255,255,.25);}
+.hero-grid div:first-child {padding-left:0; border-left:none;}
 .hero-grid small {display:block; font-size:.68rem; opacity:.85;}
-.hero-grid b {font-size:.92rem; font-weight:500;}
+.hero-grid b {font-size:.9rem; font-weight:600;}
+.stats {display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:.5rem 0 .8rem;}
+.stat {background:#fff; border:1px solid #e8ecf4; border-radius:18px; padding:14px 16px; display:flex; flex-direction:column; justify-content:space-between; gap:8px;}
+.stat small {color:#64748b; font-size:.76rem;} .stat b {font-size:1.25rem; font-weight:700; color:#0f172a;} .stat span {color:#94a3b8; font-size:.7rem;}
 .sec {font-size:.78rem; font-weight:600; color:#64748b; margin:.7rem 0 .3rem;}
-.hscroll {display:flex; gap:8px; overflow-x:auto; padding:2px 2px 8px; scrollbar-width:none;}
-.hscroll::-webkit-scrollbar {display:none;}
-.mini {flex:0 0 auto; background:#fff; border-radius:14px; padding:8px 12px; min-width:110px;
-  box-shadow:0 1px 3px rgba(15,23,42,.08);}
-.mini small {display:block; color:#64748b; font-size:.7rem;}
-.mini b {font-size:.95rem;}
 
-/* ปุ่มเพิ่มรายการลอยมุมขวาล่าง */
-.st-key-fab {position:fixed !important; left:50%; transform:translateX(-50%);
-  bottom:calc(18px + env(safe-area-inset-bottom)); z-index:100; width:auto !important;}
-.st-key-fab button {background:linear-gradient(135deg,#06b6d4,#2563eb); border:none; border-radius:999px;
-  padding:.75rem 1.3rem; box-shadow:0 10px 24px rgba(37,99,235,.45);}
-.st-key-fab button p {color:#fff !important; font-weight:600; font-size:1.05rem; margin:0;}
+/* การ์ดรายการยอด (บัตร/บุคคล) */
+.lcard {background:#fff; border:1px solid #e8ecf4; border-radius:18px; padding:14px 16px 8px; margin-bottom:12px;}
+.lcard h4 {margin:0 0 4px; font-size:.95rem; font-weight:600;}
+.lrow {display:flex; justify-content:space-between; gap:8px; padding:9px 0; border-top:1px solid #f1f4f9; font-size:.88rem;}
+.lrow small {color:#94a3b8; margin-left:4px;} .lrow b {font-weight:600; white-space:nowrap;}
+.lgrid {display:grid; grid-template-columns:1fr 1fr; column-gap:18px;}
 
 /* แท็บแผนปี */
 .ph {display:flex; justify-content:space-between; align-items:center; margin:14px 2px 6px; font-size:1rem;}
@@ -101,24 +113,37 @@ div[class*="st-key-row_"] button {min-height:36px; width:36px; padding:0; border
 .pbar {height:8px; border-radius:9px; background:rgba(255,255,255,.25); margin-top:14px; overflow:hidden;}
 .pbar i {display:block; height:100%; background:#fff;}
 
-/* มินิการ์ดยอดตามบัตร/บุคคล */
-.minis {display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:4px;}
+/* ปุ่มเพิ่มรายการลอยกลางล่าง */
+.st-key-fab {position:fixed !important; left:50%; transform:translateX(-50%);
+  bottom:calc(18px + env(safe-area-inset-bottom)); z-index:100; width:auto !important;}
+.st-key-fab button {background:#2563eb; border:none; border-radius:999px;
+  padding:.7rem 1.3rem; box-shadow:0 10px 24px rgba(37,99,235,.4);}
+.st-key-fab button p {color:#fff !important; font-weight:600; font-size:1.02rem; margin:0;}
 
-/* ===== หน้าจอคอม (กว้าง ≥ 1000px): สองคอลัมน์ ===== */
+/* ===== หน้าจอคอม (กว้าง ≥ 1000px) ===== */
 @media (min-width:1000px) {
-  .block-container {max-width:1180px !important;}
+  .block-container {max-width:1240px !important;}
   .st-key-topbar [data-testid="stHorizontalBlock"] {max-width:440px;}
   .st-key-side, .st-key-plan_side {position:sticky; top:84px;}
-  .st-key-side .hero {margin-top:0;}
-  .st-key-list {display:grid !important; grid-template-columns:1fr 1fr; gap:10px !important;}
-  .st-key-list > * {min-width:0;}
-  .st-key-list div[class*="st-key-row_"] {margin-bottom:0;}
   .st-key-fab {left:auto !important; right:40px; transform:none !important;}
+  .hero {padding:24px 28px; min-height:178px; margin-top:0;} .hero-amt {font-size:2.5rem;}
+  .stats {margin-top:0; height:calc(100% - .8rem);} .stat {padding:18px 20px;} .stat b {font-size:1.7rem;}
+  /* ตารางรายการ */
+  .st-key-txcard {background:#fff; border:1px solid #e8ecf4; border-radius:20px; padding:18px 22px 10px;}
+  .st-key-filters {grid-template-columns:2fr 1fr 1fr;} .st-key-filters > *:first-child {grid-column:auto;}
+  .st-key-txcard div[class*="st-key-row_"] {background:none; border:none; border-bottom:1px solid #eef1f6; border-radius:0; padding:8px 0; margin:0;}
+  .tx {grid-template-columns:1.7fr 1.5fr .8fr .9fr; grid-template-areas:"main meta date amt"; gap:12px; align-items:center;}
+  .tx-meta {margin-top:0;} .tx-date {display:block; color:#94a3b8; font-size:.8rem;} .only-m {display:none;}
+  .th {display:grid; grid-template-columns:1.7fr 1.5fr .8fr .9fr; gap:12px; padding:8px 94px 8px 0;
+       border-bottom:1px solid #eef1f6; color:#94a3b8; font-size:.72rem; font-weight:600;}
+  .th span:last-child {text-align:right;}
 }
-/* จอกลาง (641–999px): ซ้อนเป็นคอลัมน์เดียว */
+/* จอกลาง: ซ้อนเป็นคอลัมน์เดียว */
 @media (max-width:999px) {
-  .st-key-main_cols [data-testid="stHorizontalBlock"], .st-key-plan_cols [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important;}
-  .st-key-main_cols [data-testid="stColumn"], .st-key-plan_cols [data-testid="stColumn"] {flex:1 1 100% !important; width:100% !important; min-width:100% !important;}
+  .st-key-main_cols [data-testid="stHorizontalBlock"], .st-key-plan_cols [data-testid="stHorizontalBlock"],
+  .st-key-top_cols [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important;}
+  .st-key-main_cols [data-testid="stColumn"], .st-key-plan_cols [data-testid="stColumn"],
+  .st-key-top_cols [data-testid="stColumn"] {flex:1 1 100% !important; width:100% !important; min-width:100% !important;}
 }
 </style>
 """
@@ -434,24 +459,36 @@ tab1, tab2, tab_export, tab_plan, tab3 = st.tabs(["📋 รายการ", "�
 
 # ---------- Tab 1: รายการ ----------
 with tab1:
+    with st.container(key="top_cols"):
+        top_l, top_r = st.columns([2.1, 2], gap="medium")
+    with top_l:
+        render_hero()
+    with top_r:
+        n_cards = by_card["type"].nunique()
+        n_people = by_person["name"].nunique()
+        st.markdown(f"""
+<div class="stats">
+  <div class="stat"><small>ยอดใช้จ่ายทั้งหมด</small><b>{money(df["amount"].sum())}</b><span>{len(df)} รายการในงวดนี้</span></div>
+  <div class="stat"><small>บัตร / ผู้จ่าย</small><b>{n_cards} / {n_people}</b><span>สรุปตามบัตร {n_cards} ใบ</span></div>
+</div>""", unsafe_allow_html=True)
+
     with st.container(key="main_cols"):
         left, right = st.columns([1, 2.1], gap="medium")
 
     with left:
-        with st.container(key="side"):
-            render_hero()
-            if not df.empty:
+        if not df.empty:
+            with st.container(key="side"):
                 if not by_card.empty:
-                    st.markdown('<div class="sec">ยอดตามบัตร</div><div class="minis">' + "".join(
-                        f'<div class="mini"><small>{h(c)}{" · ตัด " + str(bill_days[c]) if c in bill_days else ""}</small>'
+                    st.markdown('<div class="lcard"><h4>ยอดตามบัตร</h4>' + "".join(
+                        f'<div class="lrow"><span>{h(c)}{"<small>ตัด " + str(bill_days[c]) + "</small>" if c in bill_days else ""}</span>'
                         f'<b>{money(v)}</b></div>'
                         for c, v in by_card.groupby("type")["amount"].sum().sort_values(ascending=False).items())
                         + "</div>", unsafe_allow_html=True)
                 if not by_person.empty:
-                    st.markdown('<div class="sec">ยอดรายบุคคล</div><div class="minis">' + "".join(
-                        f'<div class="mini"><small>{h(n)}</small><b>{money(v)}</b></div>'
+                    st.markdown('<div class="lcard"><h4>ยอดรายบุคคล</h4><div class="lgrid">' + "".join(
+                        f'<div class="lrow"><span>{h(n)}</span><b>{money(v)}</b></div>'
                         for n, v in by_person.groupby("name")["amount"].sum().sort_values(ascending=False).items())
-                        + "</div>", unsafe_allow_html=True)
+                        + "</div></div>", unsafe_allow_html=True)
 
     with right:
         if df.empty:
@@ -459,25 +496,26 @@ with tab1:
             if st.button(f"📥 ยกรายการต่อเนื่องจาก {plabel(prev_period(period))}", key="carry_empty", width="stretch"):
                 do_carry()
         else:
-            with st.expander("🔎 ค้นหา / กรอง"):
-                q = st.text_input("ค้นหา", placeholder="ค้นหารายการ…", label_visibility="collapsed")
-                f1, f2 = st.columns(2)
-                fc = f1.selectbox("บัตร", ["ทั้งหมด"] + cards)
-                fp = f2.selectbox("ผู้จ่าย", ["ทั้งหมด"] + NAMES)
-            view = df
-            if q:
-                mask = df[["item", "type", "name", "description"]].fillna("").apply(
-                    lambda col: col.astype(str).str.contains(q, case=False)).any(axis=1)
-                view = view[mask]
-            if fc != "ทั้งหมด":
-                view = view[view["type"] == fc]
-            if fp != "ทั้งหมด":
-                view = view[view["name"] == fp]
+            with st.container(key="txcard"):
+                st.markdown('<div class="txh"><b>รายการธุรกรรม</b></div>', unsafe_allow_html=True)
+                with st.container(key="filters"):
+                    q = st.text_input("ค้นหา", placeholder="🔎 ค้นหารายการ / บัตร / ผู้จ่าย…", label_visibility="collapsed")
+                    fc = st.selectbox("บัตร", ["บัตรทั้งหมด"] + cards, label_visibility="collapsed")
+                    fp = st.selectbox("ผู้จ่าย", ["ผู้จ่ายทั้งหมด"] + NAMES, label_visibility="collapsed")
+                view = df
+                if q:
+                    mask = df[["item", "type", "name", "description"]].fillna("").apply(
+                        lambda col: col.astype(str).str.contains(q, case=False)).any(axis=1)
+                    view = view[mask]
+                if fc != "บัตรทั้งหมด":
+                    view = view[view["type"] == fc]
+                if fp != "ผู้จ่ายทั้งหมด":
+                    view = view[view["name"] == fp]
 
-            st.markdown(f'<div class="sec">{len(view)} รายการ · รวม {money(view["amount"].sum())}</div>',
-                        unsafe_allow_html=True)
+                st.markdown(f'<div class="txh"><small>แสดง {len(view)} จาก {len(df)} รายการ · รวม {money(view["amount"].sum())}</small></div>'
+                            '<div class="th"><span>รายการ</span><span>บัตร / ผู้จ่าย</span><span>วันที่</span>'
+                            '<span>จำนวนเงิน</span></div>', unsafe_allow_html=True)
 
-            with st.container(key="list"):
                 for r in view.itertuples():
                     chips = []
                     if r.type:
@@ -486,14 +524,15 @@ with tab1:
                         chips.append(f'<span class="chip p-{PCLS.get(r.name, "oth")}">{h(r.name)}</span>')
                     if has(r.inst_no):
                         chips.append(f'<span class="chip inst">ผ่อน {inst_txt(r.inst_no, r.inst_total)}</span>')
-                    if has(r.date):
-                        chips.append(f'<span class="chip">{r.date.day} {TH_M[r.date.month - 1]}</span>')
+                    dtxt = f"{r.date.day} {TH_M[r.date.month - 1]}" if has(r.date) else ""
+                    if dtxt:
+                        chips.append(f'<span class="chip only-m">{dtxt}</span>')
                     desc = f'<div class="tx-desc">{h(r.description)}</div>' if r.description else ""
                     with st.container(key=f"row_{r.id}"):
                         c = st.columns([1, 0.1, 0.1], vertical_alignment="center")
                         c[0].markdown(
-                            f'<div class="tx"><div><div class="tx-title">{h(r.item)}{" 🔁" if r.recurring else ""}</div>'
-                            f'<div class="tx-meta">{"".join(chips)}</div>{desc}</div>'
+                            f'<div class="tx"><div class="tx-main"><div class="tx-title">{h(r.item)}{" 🔁" if r.recurring else ""}</div>{desc}</div>'
+                            f'<div class="tx-meta">{"".join(chips)}</div><div class="tx-date">{dtxt or "—"}</div>'
                             f'<div class="tx-amt">{money(r.amount)}</div></div>', unsafe_allow_html=True)
                         if c[1].button("✏️", key=f"e{r.id}", help="แก้ไข"):
                             edit_dialog(df[df["id"] == r.id].iloc[0])
