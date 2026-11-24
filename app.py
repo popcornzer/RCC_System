@@ -93,6 +93,14 @@ div[class*="st-key-row_"] button {min-height:36px; width:36px; padding:0; border
   padding:.75rem 1.3rem; box-shadow:0 10px 24px rgba(37,99,235,.45);}
 .st-key-fab button p {color:#fff !important; font-weight:600; font-size:1.05rem; margin:0;}
 
+/* แท็บแผนปี */
+.ph {display:flex; justify-content:space-between; align-items:center; margin:14px 2px 6px; font-size:1rem;}
+.ph b {color:#0f172a;} .ph span {font-weight:600; color:#1d4ed8;}
+.ptag {font-size:.7rem; border-radius:999px; padding:1px 9px; margin-left:6px; font-weight:500;}
+.ptag.inc {background:#d1fae5; color:#047857;} .ptag.exp {background:#e0e7ff; color:#3730a3;}
+.pbar {height:8px; border-radius:9px; background:rgba(255,255,255,.25); margin-top:14px; overflow:hidden;}
+.pbar i {display:block; height:100%; background:#fff;}
+
 /* มินิการ์ดยอดตามบัตร/บุคคล */
 .minis {display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:4px;}
 
@@ -100,7 +108,7 @@ div[class*="st-key-row_"] button {min-height:36px; width:36px; padding:0; border
 @media (min-width:1000px) {
   .block-container {max-width:1180px !important;}
   .st-key-topbar [data-testid="stHorizontalBlock"] {max-width:440px;}
-  .st-key-side {position:sticky; top:84px;}
+  .st-key-side, .st-key-plan_side {position:sticky; top:84px;}
   .st-key-side .hero {margin-top:0;}
   .st-key-list {display:grid !important; grid-template-columns:1fr 1fr; gap:10px !important;}
   .st-key-list > * {min-width:0;}
@@ -109,8 +117,8 @@ div[class*="st-key-row_"] button {min-height:36px; width:36px; padding:0; border
 }
 /* จอกลาง (641–999px): ซ้อนเป็นคอลัมน์เดียว */
 @media (max-width:999px) {
-  .st-key-main_cols [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important;}
-  .st-key-main_cols [data-testid="stColumn"] {flex:1 1 100% !important; width:100% !important; min-width:100% !important;}
+  .st-key-main_cols [data-testid="stHorizontalBlock"], .st-key-plan_cols [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important;}
+  .st-key-main_cols [data-testid="stColumn"], .st-key-plan_cols [data-testid="stColumn"] {flex:1 1 100% !important; width:100% !important; min-width:100% !important;}
 }
 </style>
 """
@@ -214,6 +222,17 @@ def init_db():
     run("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
     run("CREATE TABLE IF NOT EXISTS period_salary (period TEXT PRIMARY KEY, salary NUMERIC NOT NULL)")
     run("ALTER TABLE expense_types ADD COLUMN IF NOT EXISTS bill_day INT")
+    run("CREATE TABLE IF NOT EXISTS yearly_plan (id SERIAL PRIMARY KEY, year INT NOT NULL, kind TEXT NOT NULL, "
+        "grp TEXT NOT NULL, item TEXT NOT NULL, amount NUMERIC NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '')")
+    if not run("SELECT 1 FROM settings WHERE key='plan_seed_2026'", fetch=True):     # ใส่ข้อมูลตั้งต้นครั้งเดียว
+        run("INSERT INTO yearly_plan (year,kind,grp,item,amount,note) VALUES (%s,%s,%s,%s,%s,%s)", [
+            (2026, "income", "รายรับ", "Bonus", 136000, "โบนัสสิ้นปี (ประมาณการ)"),
+            (2026, "expense", "รถ", "ประกันรถ", 14584, ""),
+            (2026, "expense", "รถ", "ภาษีรถ", 2037, ""),
+            (2026, "expense", "รถ", "เช็กระยะ 2 ครั้ง", 7000, ""),
+            (2026, "expense", "ประกัน", "ประกันสุขภาพ", 20248, "aia"),
+            (2026, "expense", "ท่องเที่ยว", "เที่ยวเกาหลี", 30000, "")], many=True)
+        run("INSERT INTO settings (key,value) VALUES ('plan_seed_2026','1') ON CONFLICT (key) DO NOTHING")
     return True
 
 
@@ -411,7 +430,7 @@ with st.container(key="fab"):
     if st.button("＋ เพิ่มรายการ", key="fab_btn"):
         add_dialog()
 
-tab1, tab2, tab_export, tab3 = st.tabs(["📋 รายการ", "📊 ภาพรวม", "📤 ส่งออก", "⚙️ ตั้งค่า"])
+tab1, tab2, tab_export, tab_plan, tab3 = st.tabs(["📋 รายการ", "📊 ภาพรวม", "📤 ส่งออก", "🗓️ แผนปี", "⚙️ ตั้งค่า"])
 
 # ---------- Tab 1: รายการ ----------
 with tab1:
@@ -534,6 +553,125 @@ with tab_export:
                        on_click="ignore", width="stretch")
     st.caption("Excel มี 3 ชีต: รายการ (กรองได้ ใช้ทำ Pivot ต่อ), สรุปตามผู้จ่าย, สรุปตามบัตร · "
                "PDF เหมาะสำหรับดู/ส่งต่อ มีสรุปและรายการแยกตามงวด")
+
+# ---------- Tab: แผนปี (โน้ตวางแผนการเงินรายปี แยกจากรายการจริง) ----------
+NEW_GRP = "➕ กลุ่มใหม่…"
+
+
+@st.dialog("➕ เพิ่มรายการแผน")
+def plan_add_dialog(kind, groups, default_grp=None):
+    groups = groups or (["รายรับ"] if kind == "income" else [])
+    opts = groups + [NEW_GRP]
+    with st.form("plan_add"):
+        g_sel = st.selectbox("กลุ่ม", opts, index=opts.index(default_grp) if default_grp in opts else len(opts) - 1)
+        g_new = st.text_input("ชื่อกลุ่มใหม่ (กรอกเมื่อเลือก “กลุ่มใหม่”)")
+        item = st.text_input("รายการ", placeholder="เช่น ประกันรถ, Bonus")
+        amount = st.number_input("จำนวนเงิน (฿)", min_value=0.0, step=100.0, format="%.2f")
+        note = st.text_input("หมายเหตุ")
+        if st.form_submit_button("บันทึก", type="primary", width="stretch"):
+            g = g_new.strip() if g_sel == NEW_GRP else g_sel
+            if not g or not item.strip() or amount <= 0:
+                st.error("กรุณากรอกกลุ่ม รายการ และจำนวนเงิน")
+            else:
+                run("INSERT INTO yearly_plan (year,kind,grp,item,amount,note) VALUES (%s,%s,%s,%s,%s,%s)",
+                    (year, kind, g, item.strip(), amount, note.strip()))
+                st.session_state["msg"] = "เพิ่มรายการแผนแล้ว"
+                st.rerun()
+
+
+@st.dialog("✏️ แก้ไขรายการแผน")
+def plan_edit_dialog(rec):
+    with st.form("plan_edit"):
+        g = st.text_input("กลุ่ม", rec["grp"])
+        item = st.text_input("รายการ", rec["item"])
+        amount = st.number_input("จำนวนเงิน (฿)", min_value=0.0, step=100.0, format="%.2f", value=float(rec["amount"]))
+        note = st.text_input("หมายเหตุ", rec["note"] or "")
+        if st.form_submit_button("บันทึกข้อมูล", type="primary", width="stretch"):
+            if not g.strip() or not item.strip() or amount <= 0:
+                st.error("กรุณากรอกกลุ่ม รายการ และจำนวนเงิน")
+            else:
+                run("UPDATE yearly_plan SET grp=%s,item=%s,amount=%s,note=%s WHERE id=%s",
+                    (g.strip(), item.strip(), amount, note.strip(), int(rec["id"])))
+                st.session_state["msg"] = "บันทึกสำเร็จ"
+                st.rerun()
+
+
+@st.dialog("🗑️ ยืนยันการลบ")
+def plan_delete_dialog(rec):
+    st.warning(f"ลบ: {rec['item']}  {money(rec['amount'])}\n\nลบแล้วกู้คืนไม่ได้")
+    b1, b2 = st.columns(2)
+    if b1.button("ลบรายการ", type="primary", width="stretch"):
+        run("DELETE FROM yearly_plan WHERE id=%s", (int(rec["id"]),))
+        st.session_state["msg"] = "ลบรายการสำเร็จ"
+        st.rerun()
+    if b2.button("ยกเลิก", width="stretch"):
+        st.rerun()
+
+
+with tab_plan:
+    prow = run("SELECT id, kind, grp, item, amount::float AS amount, note FROM yearly_plan "
+               "WHERE year=%s ORDER BY id", (year,), fetch=True)
+    pdf = pd.DataFrame(prow, columns=["id", "kind", "grp", "item", "amount", "note"])
+    inc = float(pdf.loc[pdf["kind"] == "income", "amount"].sum())
+    expn = float(pdf.loc[pdf["kind"] == "expense", "amount"].sum())
+    left_amt = inc - expn
+    pct = min(100.0, expn / inc * 100) if inc > 0 else 0.0
+
+    with st.container(key="plan_cols"):
+        pl, pr = st.columns([1, 2.1], gap="medium")
+
+    with pl:
+        with st.container(key="plan_side"):
+            st.markdown(f"""
+<div class="hero">
+  <div class="hero-label" style="margin-top:0">แผนปี {year} · เหลือหลังหักแผนรายจ่าย</div>
+  <div class="hero-amt" style="{'color:#fecaca' if left_amt < 0 else ''}">{money(left_amt)}</div>
+  <div class="hero-grid" style="grid-template-columns:1fr 1fr">
+    <div><small>รายรับคาดการณ์</small><b>{money(inc)}</b></div>
+    <div><small>แผนรายจ่ายรวม</small><b>{money(expn)}</b></div>
+  </div>
+  <div class="pbar"><i style="width:{pct:.0f}%"></i></div>
+  <div class="hero-label" style="margin-top:5px">ใช้ไปตามแผน {pct:.0f}% ของรายรับ</div>
+</div>""", unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown("**ลองคำนวณ** (ไม่บันทึกลงข้อมูล)")
+                sim = st.number_input("ถ้ารายรับ (โบนัส) ได้ ฿", min_value=0.0, value=inc, step=1000.0,
+                                      key=f"sim_{year}_{int(inc)}")
+                st.metric("จะเหลือ", money(sim - expn))
+
+    with pr:
+        if pdf.empty:
+            st.info(f"ปี {year} ยังไม่มีแผน กดปุ่มด้านล่างเพื่อเพิ่มรายรับหรือรายจ่าย")
+        for kind, title, tag in (("income", "💰 รายรับ", "inc"), ("expense", "🧾 แผนรายจ่าย", "exp")):
+            sub = pdf[pdf["kind"] == kind]
+            groups = list(dict.fromkeys(sub["grp"]))
+            if kind == "income" and sub.empty:
+                continue
+            if kind == "expense":
+                st.markdown('<div class="sec" style="margin-top:1rem">แผนรายจ่าย</div>', unsafe_allow_html=True)
+            for gi, g in enumerate(groups):
+                gdf = sub[sub["grp"] == g]
+                st.markdown(f'<div class="ph"><div><b>{h(g)}</b><span class="ptag {tag}">'
+                            f'{"รายรับ" if kind == "income" else "รายจ่าย"}</span></div>'
+                            f'<span>{money(gdf["amount"].sum())}</span></div>', unsafe_allow_html=True)
+                for r in gdf.itertuples():
+                    note = f'<div class="tx-desc">{h(r.note)}</div>' if r.note else ""
+                    with st.container(key=f"row_p{r.id}"):
+                        c = st.columns([1, 0.1, 0.1], vertical_alignment="center")
+                        c[0].markdown(
+                            f'<div class="tx"><div><div class="tx-title">{h(r.item)}</div>{note}</div>'
+                            f'<div class="tx-amt">{money(r.amount)}</div></div>', unsafe_allow_html=True)
+                        if c[1].button("✏️", key=f"pe{r.id}", help="แก้ไข"):
+                            plan_edit_dialog(pdf[pdf["id"] == r.id].iloc[0])
+                        if c[2].button("🗑️", key=f"pd{r.id}", help="ลบ"):
+                            plan_delete_dialog(pdf[pdf["id"] == r.id].iloc[0])
+                if st.button(f"＋ เพิ่มในกลุ่ม {g}", key=f"pa_{kind}_{gi}"):
+                    plan_add_dialog(kind, groups, g)
+        a1, a2 = st.columns(2)
+        if a1.button("＋ เพิ่มรายรับ", key="pa_new_income", width="stretch"):
+            plan_add_dialog("income", list(dict.fromkeys(pdf.loc[pdf["kind"] == "income", "grp"])))
+        if a2.button("＋ เพิ่มกลุ่มรายจ่ายใหม่", key="pa_new_expense", width="stretch"):
+            plan_add_dialog("expense", list(dict.fromkeys(pdf.loc[pdf["kind"] == "expense", "grp"])))
 
 # ---------- Tab 3: ตั้งค่า ----------
 with tab3:
